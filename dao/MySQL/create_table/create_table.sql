@@ -1,8 +1,8 @@
 USE logo_api;
 CREATE TABLE universities (
-    id VARCHAR(20) PRIMARY KEY NOT NULL COMMENT '学校唯一英文简称id',
+    slug CHAR(10) PRIMARY KEY NOT NULL COMMENT '教育部学校识别码',
+    short_name VARCHAR(20) NOT NULL UNIQUE COMMENT '学校唯一英文简称id',
     title VARCHAR(255) NOT NULL COMMENT '学校中文全称',
-    slug CHAR(10) NOT NULL COMMENT '教育部学校识别码',
     vis VARCHAR(255) COMMENT '视觉形象识别系统网址',
     website VARCHAR(255) COMMENT '学校官网网址',
     full_name_en VARCHAR(100) NOT NULL COMMENT '英文官方全称',
@@ -39,5 +39,5 @@ CREATE TABLE university_resources (
     resolution VARCHAR(20) DEFAULT NULL COMMENT '分辨率(位图类)',
     used_for_edge TINYINT(1) DEFAULT 0 COMMENT '是否为边缘计算主输入文件',
     is_deleted TINYINT(1) DEFAULT 0 COMMENT '该资源是否已经被删除',
-    FOREIGN KEY (short_name) REFERENCES universities(id)
+    FOREIGN KEY (short_name) REFERENCES universities(short_name)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
