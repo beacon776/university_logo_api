@@ -1,8 +1,8 @@
 USE logo_api;
-CREATE TABLE universities (
+CREATE TABLE IF NOT EXISTS universities (
     slug CHAR(10) PRIMARY KEY NOT NULL COMMENT '教育部学校识别码',
     short_name VARCHAR(20) NOT NULL UNIQUE COMMENT '学校唯一英文简称id',
-    title VARCHAR(255) NOT NULL COMMENT '学校中文全称',
+    title VARCHAR(255) NOT NULL UNIQUE COMMENT '学校中文全称',
     vis VARCHAR(255) COMMENT '视觉形象识别系统网址',
     website VARCHAR(255) COMMENT '学校官网网址',
     full_name_en VARCHAR(100) NOT NULL COMMENT '英文官方全称',
@@ -21,13 +21,16 @@ CREATE TABLE universities (
     resource_count INT DEFAULT 0 COMMENT '资源文件总数',
     edge_computation_input_id INT DEFAULT NULL COMMENT '边缘计算主输入文件ID(university_resources表)',
 
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间'
+    created_time DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_time DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    INDEX idx_short_name(short_name),
+    INDEX idx_title(title)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
-CREATE TABLE university_resources (
+CREATE TABLE IF NOT EXISTS university_resources (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '资源id编号',
     short_name VARCHAR(20) NOT NULL COMMENT '学校唯一英文简称',
+    title VARCHAR(255) NOT NULL COMMENT '学校中文全称',
     resource_name VARCHAR(50) COMMENT '资源名称',
     resource_type VARCHAR(50) COMMENT '资源类型，如svg、png、zip、rar',
     resource_md5 CHAR(32) COMMENT '资源md5校验',
@@ -36,8 +39,10 @@ CREATE TABLE university_resources (
 
     is_vector TINYINT(1) DEFAULT 0 COMMENT '是否为矢量文件',
     is_bitmap TINYINT(1) DEFAULT 0 COMMENT '是否为位图文件',
-    resolution VARCHAR(20) DEFAULT NULL COMMENT '分辨率(位图类)',
+    resolution_width INT DEFAULT NULL COMMENT '宽度(px)',
+    resolution_height INT DEFAULT NULL COMMENT '高度(px)',
     used_for_edge TINYINT(1) DEFAULT 0 COMMENT '是否为边缘计算主输入文件',
     is_deleted TINYINT(1) DEFAULT 0 COMMENT '该资源是否已经被删除',
-    FOREIGN KEY (short_name) REFERENCES universities(short_name)
+    FOREIGN KEY (short_name) REFERENCES universities(short_name),
+    FOREIGN KEY (title) REFERENCES universities(title)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
