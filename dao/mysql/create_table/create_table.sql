@@ -36,13 +36,15 @@ CREATE TABLE IF NOT EXISTS university_resources (
     resource_md5 CHAR(32) COMMENT '资源md5校验',
     resource_size_b INT COMMENT '资源总大小(B)',
     last_update_time TIMESTAMP COMMENT '资源最后更新时间',
-
+    upload_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '资源上传时间',
+    expire_time TIMESTAMP NULL COMMENT '资源过期时间，NULL表示永不过期',
     is_vector TINYINT(1) DEFAULT 0 COMMENT '是否为矢量文件',
     is_bitmap TINYINT(1) DEFAULT 0 COMMENT '是否为位图文件',
     resolution_width INT DEFAULT NULL COMMENT '宽度(px)',
     resolution_height INT DEFAULT NULL COMMENT '高度(px)',
     used_for_edge TINYINT(1) DEFAULT 0 COMMENT '是否为边缘计算主输入文件',
     is_deleted TINYINT(1) DEFAULT 0 COMMENT '该资源是否已经被删除',
+    background_color VARCHAR(20) COMMENT '背景颜色，可为十六进制或CSS颜色名',
     FOREIGN KEY (short_name) REFERENCES universities(short_name),
     FOREIGN KEY (title) REFERENCES universities(title)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
