@@ -3,25 +3,29 @@ package util
 import (
 	"context"
 	"crypto/md5"
-	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"github.com/tencentyun/cos-go-sdk-v5"
 	"go.uber.org/zap"
 	"io"
-	"logo_api/dao/mysql"
 	"logo_api/settings"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
-	"time"
 )
 
 type CosClient struct {
 	Client *cos.Client
+}
+type BitmapResourceInfo struct {
+	ResourceName     string
+	ResourceMd5      string
+	ResourceSizeB    int64
+	ResolutionWidth  int64
+	ResolutionHeight int64
+	BackgroundColor  string
 }
 
 func NewClient(config *settings.CosConfig) (*CosClient, error) {
@@ -41,189 +45,125 @@ func NewClient(config *settings.CosConfig) (*CosClient, error) {
 	return cosClient, err
 }
 
-func (c *CosClient) DownloadObjectByResourceName(resourceName string, shortName string) (err error) {
+func (c *CosClient) GetObjectByResourceName(resourceName string, shortName string) (data []byte, err error) {
 	name := fmt.Sprintf("beacon/%s/%s", shortName, resourceName)
 	// 1 直接用 SDK 的 Get 方法拿到 io.ReadCloser
 	resp, err := c.Client.Object.Get(context.Background(), name, nil)
 	if err != nil {
 		zap.L().Error("cos.Object.Get() err:", zap.Error(err))
-		return err
+		return nil, err
 	}
 	defer resp.Body.Close()
 
-	// 2 创建目录，如果不存在
-	err = os.MkdirAll(shortName, os.ModePerm)
+	data, err = io.ReadAll(resp.Body)
 	if err != nil {
-		zap.L().Error("os.MkdirAll() err:", zap.Error(err))
-		return err
+		zap.L().Error("io.ReadAll() err:", zap.Error(err))
+		return nil, err
 	}
 
-	// 3 在本地创建一个文件
-	filePath := filepath.Join(shortName, resourceName)
-	f, err := os.Create(filePath)
-	if err != nil {
-		zap.L().Error("os.Create() err:", zap.Error(err))
-		return err
-	}
-	defer f.Close()
-
-	// 4 把远程的数据流拷贝到本地文件
-	n, err := io.Copy(f, resp.Body)
-	if err != nil {
-		zap.L().Error("io.Copy() err:", zap.Error(err))
-		return err
-	}
-
-	zap.L().Info("成功下载文件到本地", zap.String("filePath", filePath), zap.Int64("bytes", n))
-	// 确认文件大小
-	fi, err := os.Stat(filePath)
-	if err != nil {
-		zap.L().Error("os.Stat() err:", zap.Error(err))
-		return err
-	}
-	zap.L().Info("文件大小", zap.Int64("size", fi.Size()))
-
-	return nil
+	return data, nil
 }
 
-func (c *CosClient) DownloadObjectByResourceNameAndSvgToBitmap(resourceName, title, shortName, resourceType string, size int, width int, height int, bgColor string) (err error) {
-
-	// 获取跨平台临时目录
-	tmpDir := os.TempDir()
-
-	svgPath := filepath.Join(tmpDir, resourceName)
-
-	// 确保父目录存在
-	if err = os.MkdirAll(filepath.Dir(svgPath), os.ModePerm); err != nil {
-		zap.L().Error("os.MkdirAll() err:", zap.Error(err))
-		return err
-	}
-
-	// 创建文件
-	outFile, err := os.Create(svgPath)
+func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, shortName, resourceType string, size int, width int, height int, bgColor string) (data []byte, bitmapInfo BitmapResourceInfo, err error) {
+	// 创建临时文件（系统临时目录下，自动生成唯一文件名）
+	tmpFile, err := os.CreateTemp("", resourceName) // "" 表示系统临时目录
 	if err != nil {
-		zap.L().Error("os.Create() err:", zap.Error(err))
-		return err
+		zap.L().Error("os.CreateTemp() err:", zap.Error(err))
+		return nil, BitmapResourceInfo{}, err
 	}
-	defer outFile.Close()
+	defer os.Remove(tmpFile.Name())
+	defer tmpFile.Close()
 
-	name := fmt.Sprintf("beacon/%s/%s", shortName, resourceName)
-	// 1 直接用 SDK 的 Get 方法拿到 io.ReadCloser
-	resp, err := c.Client.Object.Get(context.Background(), name, nil)
+	cosPath := fmt.Sprintf("beacon/%s/%s", shortName, resourceName)
+	resp, err := c.Client.Object.Get(context.Background(), cosPath, nil)
 	if err != nil {
 		zap.L().Error("cos.Object.Get() err:", zap.Error(err))
-		return err
+		return nil, BitmapResourceInfo{}, err
 	}
 	defer resp.Body.Close()
 
-	// 把 svg 文件从 COS 下载到本地
-	_, err = io.Copy(outFile, resp.Body)
-	if err != nil {
+	// 直接把远程数据写入临时文件
+	if _, err = io.Copy(tmpFile, resp.Body); err != nil {
 		zap.L().Error("io.Copy() err:", zap.Error(err))
-		return err
+		return nil, BitmapResourceInfo{}, err
 	}
+	// 关闭临时文件用于后续读取
+	if err = tmpFile.Close(); err != nil {
+		return nil, BitmapResourceInfo{}, err
+	}
+	// 临时 svg 文件路径
+	svgPath := tmpFile.Name()
 
 	// 调用 rsvg-convert 执行格式转换
-	var bitmapPath string // 输出路径
-	if size != 0 {
-		bitmapPath = filepath.Join(tmpDir, fmt.Sprintf("%s-logo-%dpx.%s", title, size, resourceType))
-	} else {
-		if width != 0 && height != 0 {
-			bitmapPath = filepath.Join(tmpDir, fmt.Sprintf("%s-logo-%dpx-%dpx.%s", title, width, height, resourceType))
-		}
+	// 例如转换生成临时 bitmap 文件
+	bitmapTmpFile, err := os.CreateTemp("", fmt.Sprintf("%s-logo-*.%s", title, resourceType))
+	if err != nil {
+		zap.L().Error("os.CreateTemp() err:", zap.Error(err))
+		return nil, BitmapResourceInfo{}, err
 	}
-	if err = os.MkdirAll(filepath.Dir(bitmapPath), os.ModePerm); err != nil {
-		zap.L().Error("os.MkdirAll(bitmapPath) err:", zap.Error(err))
-		return err
-	}
+	defer func() {
+		bitmapTmpFile.Close()
+		os.Remove(bitmapTmpFile.Name())
+	}()
+
+	bitmapPath := bitmapTmpFile.Name()
+	bitmapTmpFile.Close() // 关闭后传路径给转换命令使用
 
 	if err = ConvertSvgToBitmap(svgPath, bitmapPath, resourceType, size, width, height, bgColor); err != nil {
 		zap.L().Error("ConvertSvgToBitmap() err:", zap.Error(err))
-		return err
+		return nil, BitmapResourceInfo{}, err
 	}
 
-	// 3. 转换完成后，确认文件存在
-	if _, err := os.Stat(bitmapPath); os.IsNotExist(err) {
-		zap.L().Error("bitmap file missing after conversion", zap.String("path", bitmapPath))
-		return fmt.Errorf("bitmap file not found after conversion")
-	}
-
-	localPath, err := SaveFileToLocalDir(bitmapPath, shortName)
-	if err != nil {
-		return err
-	}
-	zap.L().Info("文件保存到本地目录", zap.String("localPath", localPath))
-
-	// 同步在 腾讯云 cos 和 本地 MySQL 中同步存储新文件，并把新文件保存到本地。
-	outputDir := filepath.Join(".", shortName)
-	if err := os.MkdirAll(outputDir, os.ModePerm); err != nil {
-		return err
-	}
-
-	var bitmapResource settings.UniversityResources
-	if size != 0 {
-		bitmapResource.ResourceName = fmt.Sprintf("%s-logo-%dpx.%s", title, size, resourceType)
-		bitmapResource.ResolutionHeight = sql.NullInt64{
-			Int64: int64(size),
-			Valid: true}
-		bitmapResource.ResolutionWidth = sql.NullInt64{
-			Int64: int64(size),
-			Valid: true,
-		}
-	} else {
-		if width != 0 && height != 0 {
-			bitmapResource.ResourceName = fmt.Sprintf("%s-logo-%dpx-%dpx.%s", title, width, height, resourceType)
-			bitmapResource.ResolutionWidth = sql.NullInt64{
-				Int64: int64(width),
-				Valid: true,
-			}
-			bitmapResource.ResolutionHeight = sql.NullInt64{
-				Int64: int64(height),
-				Valid: true,
-			}
-		}
-	}
-	bitmapResource.ShortName = shortName
-	bitmapResource.Title = title
-	bitmapResource.ResourceType = resourceType
+	// 读取 bitmap 文件的 md5 和 size
 	fileMd5, err := GetFileMd5(bitmapPath)
 	if err != nil {
 		zap.L().Error("GetFileMd5() err:", zap.Error(err))
-		return err
+		return nil, BitmapResourceInfo{}, err
 	}
-	bitmapResource.ResourceMd5 = fileMd5
-
 	sizeb, err := GetFileSizeb(bitmapPath)
 	if err != nil {
-		zap.L().Error("GetFileSizeb() err:", zap.Error(err))
-		return err
-	}
-	bitmapResource.ResourceSizeB = sql.NullInt64{
-		Int64: sizeb,
-		Valid: true,
-	}
-	now := time.Now()
-	bitmapResource.LastUpdateTime = sql.NullTime{
-		Time:  now,
-		Valid: true,
-	} // sql.NullTime
-	bitmapResource.IsVector = false
-	bitmapResource.IsBitmap = true
-	bitmapResource.UsedForEdge = false
-	bitmapResource.IsDeleted = false
-
-	if err = mysql.InsertUniversityResource(bitmapResource); err != nil {
-		zap.L().Error("mysql.InsertUniversityResource() err:", zap.Error(err))
-		return err
+		zap.L().Error("GetFileSize() err:", zap.Error(err))
+		return nil, BitmapResourceInfo{}, err
 	}
 
+	// 读转换后的图片文件内容，准备返回
+	data, err = os.ReadFile(bitmapPath)
+	if err != nil {
+		zap.L().Error("os.ReadFile() err:", zap.Error(err))
+		return nil, BitmapResourceInfo{}, err
+	}
+
+	var newFileName, resBgColor string
+	var resWidth, resHeight int64
+	if size > 0 {
+		newFileName = fmt.Sprintf("%s-logo-%dpx.%s", title, size, resourceType)
+		resWidth, resHeight = int64(size), int64(size)
+	} else if width > 0 && height > 0 {
+		newFileName = fmt.Sprintf("%s-logo-%dpx-%dpx.%s", title, width, height, resourceType)
+		resWidth, resHeight = int64(width), int64(height)
+	}
+	if bgColor != "" {
+		resBgColor = bgColor
+	} else {
+		resBgColor = "#FFFFFF"
+	}
 	// 上传到腾讯云 COS
-	uploadCosPath := fmt.Sprintf("beacon/%s/%s", shortName, bitmapResource.ResourceName)
+	uploadCosPath := fmt.Sprintf("beacon/%s/%s", shortName, newFileName)
 	if err = c.UploadObject(bitmapPath, uploadCosPath); err != nil {
-		zap.L().Error("UploadOnject() err:", zap.Error(err))
-		return err
+		zap.L().Error("UploadObject() err:", zap.Error(err))
+		return nil, BitmapResourceInfo{}, err
 	}
-	return nil
+
+	// 返回信息给 service 层
+	info := BitmapResourceInfo{
+		ResourceName:     newFileName,
+		ResourceMd5:      fileMd5,
+		ResourceSizeB:    sizeb,
+		ResolutionWidth:  resWidth,
+		ResolutionHeight: resHeight,
+		BackgroundColor:  resBgColor,
+	}
+	return data, info, nil
 }
 
 // ConvertSvgToBitmap 使用 rsvg-convert 命令行工具，对临时下载的 svg 文件进行转格式操作
@@ -258,8 +198,9 @@ func ConvertSvgToBitmap(svgPath, bitmapPath, resourceType string, size, width, h
 	}
 
 	if bgColor != "" {
-		args = append([]string{"--background-color=" + bgColor}, args...)
+		args = append(args, "--background-color="+bgColor) // 注意这里，把背景参数加到最后
 	}
+	zap.L().Debug("Running rsvg-convert", zap.Strings("args", args))
 
 	// 调用 wsl 运行 rsvg-convert
 	cmd := exec.Command("wsl", append([]string{"rsvg-convert"}, args...)...)
@@ -329,39 +270,13 @@ func windowsPathToWslPath(winPath string) string {
 	return wslPath
 }
 
-// SaveFileToLocalDir 将源文件复制到目标目录，目标文件名和源文件相同
-func SaveFileToLocalDir(srcFilePath, targetDir string) (string, error) {
-	// 创建目标目录（如果不存在）
-	if err := os.MkdirAll(targetDir, os.ModePerm); err != nil {
-		zap.L().Error("os.MkdirAll() err:", zap.Error(err))
-		return "", err
-	}
-
-	// 目标文件路径
-	targetFilePath := filepath.Join(targetDir, filepath.Base(srcFilePath))
-
-	// 打开源文件
-	srcFile, err := os.Open(srcFilePath)
+// DeleteObject 删除腾讯云COS中对应路径的资源
+func (c *CosClient) DeleteObject(path string) error {
+	_, err := c.Client.Object.Delete(context.Background(), path)
 	if err != nil {
-		zap.L().Error("os.Open() err:", zap.Error(err))
-		return "", err
+		zap.L().Error("DeleteObject() err:", zap.String("path", path), zap.Error(err))
+		return err
 	}
-	defer srcFile.Close()
-
-	// 创建目标文件
-	dstFile, err := os.Create(targetFilePath)
-	if err != nil {
-		zap.L().Error("os.Create() err:", zap.Error(err))
-		return "", err
-	}
-	defer dstFile.Close()
-
-	// 拷贝文件内容
-	if _, err := io.Copy(dstFile, srcFile); err != nil {
-		zap.L().Error("io.Copy() err:", zap.Error(err))
-		return "", err
-	}
-
-	zap.L().Info("成功保存文件到本地目录", zap.String("path", targetFilePath))
-	return targetFilePath, nil
+	zap.L().Info("DeleteObject() success", zap.String("path", path))
+	return nil
 }
