@@ -39,11 +39,16 @@ func Init(logger *settings.LogConfig) (err error) {
 
 func getEncoder() zapcore.Encoder {
 	encoderConfig := zap.NewProductionEncoderConfig()
-	encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 	encoderConfig.TimeKey = "time"
 	encoderConfig.EncodeLevel = zapcore.CapitalLevelEncoder
 	encoderConfig.EncodeDuration = zapcore.SecondsDurationEncoder
 	encoderConfig.EncodeCaller = zapcore.ShortCallerEncoder
+	// encoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	// 自定义时间编码函数，转换为中国时区并格式化
+	encoderConfig.EncodeTime = func(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+		cst, _ := time.LoadLocation("Asia/Shanghai")
+		enc.AppendString(t.In(cst).Format("2006-01-02 15:04:05"))
+	}
 	return zapcore.NewJSONEncoder(encoderConfig)
 }
 
