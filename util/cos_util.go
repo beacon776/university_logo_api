@@ -20,6 +20,7 @@ type CosClient struct {
 	Client *cos.Client
 }
 type BitmapResourceInfo struct {
+	ShortName        string
 	ResourceName     string
 	ResourceMd5      string
 	ResourceSizeB    int64
@@ -28,6 +29,7 @@ type BitmapResourceInfo struct {
 	BackgroundColor  string
 }
 
+// NewClient 创建新*CosClient 对象，以便执行各个方法
 func NewClient(config *settings.CosConfig) (*CosClient, error) {
 	u, err := url.Parse(config.BucketUrl)
 	if err != nil {
@@ -45,9 +47,10 @@ func NewClient(config *settings.CosConfig) (*CosClient, error) {
 	return cosClient, err
 }
 
+// GetObjectByResourceName 直接从腾讯云COS上获取资源
 func (c *CosClient) GetObjectByResourceName(resourceName string, shortName string) (data []byte, err error) {
 	name := fmt.Sprintf("beacon/%s/%s", shortName, resourceName)
-	// 1 直接用 SDK 的 Get 方法拿到 io.ReadCloser
+	// 直接用 SDK 的 Get 方法拿到 io.ReadCloser
 	resp, err := c.Client.Object.Get(context.Background(), name, nil)
 	if err != nil {
 		zap.L().Error("cos.Object.Get() err:", zap.Error(err))
@@ -64,6 +67,7 @@ func (c *CosClient) GetObjectByResourceName(resourceName string, shortName strin
 	return data, nil
 }
 
+// GetObjectByResourceNameAndSvgToBitmap 从腾讯云COS上获取矢量图资源，并进行格式转换，最后返回位图相关信息
 func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, shortName, resourceType string, size int, width int, height int, bgColor string) (data []byte, bitmapInfo BitmapResourceInfo, err error) {
 	// 创建临时文件（系统临时目录下，自动生成唯一文件名）
 	tmpFile, err := os.CreateTemp("", resourceName) // "" 表示系统临时目录
@@ -89,12 +93,12 @@ func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, s
 	}
 	// 关闭临时文件用于后续读取
 	if err = tmpFile.Close(); err != nil {
+		zap.L().Error("tmpFile.Close() err:", zap.Error(err))
 		return nil, BitmapResourceInfo{}, err
 	}
 	// 临时 svg 文件路径
 	svgPath := tmpFile.Name()
 
-	// 调用 rsvg-convert 执行格式转换
 	// 例如转换生成临时 bitmap 文件
 	bitmapTmpFile, err := os.CreateTemp("", fmt.Sprintf("%s-logo-*.%s", title, resourceType))
 	if err != nil {
@@ -109,6 +113,7 @@ func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, s
 	bitmapPath := bitmapTmpFile.Name()
 	bitmapTmpFile.Close() // 关闭后传路径给转换命令使用
 
+	// 调用 rsvg-convert 执行格式转换
 	if err = ConvertSvgToBitmap(svgPath, bitmapPath, resourceType, size, width, height, bgColor); err != nil {
 		zap.L().Error("ConvertSvgToBitmap() err:", zap.Error(err))
 		return nil, BitmapResourceInfo{}, err
@@ -136,10 +141,18 @@ func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, s
 	var newFileName, resBgColor string
 	var resWidth, resHeight int64
 	if size > 0 {
-		newFileName = fmt.Sprintf("%s-logo-%dpx.%s", title, size, resourceType)
+		if bgColor == "" {
+			newFileName = fmt.Sprintf("%s-logo-%dpx.%s", title, size, resourceType)
+		} else {
+			newFileName = fmt.Sprintf("%s-logo-%dpx-%s.%s", title, size, bgColor, resourceType)
+		}
 		resWidth, resHeight = int64(size), int64(size)
 	} else if width > 0 && height > 0 {
-		newFileName = fmt.Sprintf("%s-logo-%dpx-%dpx.%s", title, width, height, resourceType)
+		if bgColor == "" {
+			newFileName = fmt.Sprintf("%s-logo-%dpx-%dpx.%s", title, width, height, resourceType)
+		} else {
+			newFileName = fmt.Sprintf("%s-logo-%dpx-%dpx-%s.%s", title, width, height, bgColor, resourceType)
+		}
 		resWidth, resHeight = int64(width), int64(height)
 	}
 	if bgColor != "" {
@@ -156,6 +169,7 @@ func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, s
 
 	// 返回信息给 service 层
 	info := BitmapResourceInfo{
+		ShortName:        shortName,
 		ResourceName:     newFileName,
 		ResourceMd5:      fileMd5,
 		ResourceSizeB:    sizeb,
@@ -239,6 +253,7 @@ func GetFileMd5(filepath string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+// UploadObject 根据 本地路径 和 腾讯云cos路径，上传文件
 func (c *CosClient) UploadObject(localPath, cosPath string) error {
 	// 打开本地文件
 	file, err := os.Open(localPath)
