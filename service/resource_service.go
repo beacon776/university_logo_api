@@ -1,9 +1,11 @@
 package service
 
 import (
-	"database/sql"
+	"context"
+	"fmt"
 	"go.uber.org/zap"
 	"logo_api/dao/mysql"
+	"logo_api/dao/redis"
 	"logo_api/settings"
 	"logo_api/util"
 	"path/filepath"
@@ -18,20 +20,38 @@ func NewResourceService(cosClient *util.CosClient) *ResourceService {
 	return &ResourceService{CosClient: cosClient}
 }
 
-// GetLogo 获取logo
+// GetLogo 获取logo文件二进制数据、相关字段数据
 func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height int) ([]byte, string, error) {
 	ext := filepath.Ext(fullName)[1:] // 去掉点
 	preName := fullName[:len(fullName)-len(ext)-1]
 
+	ctx := context.Background()
+	// 先查 Redis 缓存
+	cosPath, found, err := redis.GetLogoCache(ctx, preName, ext, size, width, height, bgColor)
+	if err != nil {
+		zap.L().Error("redis.GetLogoCache() failed", zap.Error(err))
+		return nil, "", err
+	}
+
+	// 缓存命中，从 COS 读取文件数据返回
+	if found {
+		data, err := s.CosClient.GetObjectByResourceName(cosPath, preName)
+		if err == nil {
+			zap.L().Info("GetObjectByResourceName()", zap.String("cosPath", cosPath))
+			return data, ext, nil
+		}
+	}
+
+	// 缓存没有命中，走流程，并生成新缓存
 	var resource settings.UniversityResources
-	var err error
 
 	if ext == "svg" {
 		resource, err = mysql.QueryFromNameAndSvg(preName, ext)
 	} else {
-		resource, err = mysql.QueryFromNameAndBitmap(preName, ext, size, width, height)
+		resource, err = mysql.QueryFromNameAndBitmapInfo(preName, ext, size, width, height, bgColor)
 	}
 	if err != nil {
+		zap.L().Error("mysql.Query() failed", zap.Error(err))
 		return nil, ext, err
 	}
 
@@ -46,40 +66,23 @@ func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height 
 			return nil, ext, err
 		}
 
-		// 构造 DB 记录并插入（幂等处理）
-		now := time.Now().UTC()
-		rec := settings.UniversityResources{
-			ShortName:    resource.ShortName,
-			Title:        resource.Title,
-			ResourceName: info.ResourceName,
-			ResourceType: ext,
-			ResourceMd5:  info.ResourceMd5,
-			ResourceSizeB: sql.NullInt64{
-				Int64: info.ResourceSizeB,
-				Valid: true,
-			},
-			ResolutionWidth: sql.NullInt64{
-				Int64: info.ResolutionWidth,
-				Valid: true,
-			},
-			ResolutionHeight: sql.NullInt64{
-				Int64: info.ResolutionHeight,
-				Valid: true,
-			},
-			LastUpdateTime:  sql.NullTime{Time: now, Valid: true},
-			UploadTime:      sql.NullTime{Time: now, Valid: true},
-			ExpireTime:      sql.NullTime{Time: now.Add(time.Hour), Valid: true},
-			IsVector:        false,
-			IsBitmap:        true,
-			UsedForEdge:     false,
-			IsDeleted:       false,
-			BackgroundColor: bgColor,
+		// 写 Redis 缓存，设置 TTL 1小时
+		ttl := time.Hour
+		err = redis.SetLogoCache(ctx, preName, ext, size, width, height, bgColor, info.ResourceName, info.ResourceMd5, ttl)
+		//tempTTL := time.Minute * 1
+		//err = redis.SetLogoCache(ctx, preName, ext, size, width, height, bgColor, fmt.Sprintf("beacon/%s/%s", info.ShortName, info.ResourceName), info.ResourceMd5, tempTTL)
+		if err != nil {
+			zap.L().Warn("SetLogoCache failed", zap.Error(err))
 		}
 
-		if err = mysql.InsertUniversityResource(rec); err != nil {
-			// 插入失败不要直接让请求失败（可能是重复 key），记录 warn 并继续返回图片数据
-			zap.L().Warn("InsertUniversityResource failed, maybe duplicate", zap.Error(err))
+		// 把 COS 路径和过期时间放入待删除集合
+		expireAt := time.Now().Add(ttl)
+		//expireAt := time.Now().Add(tempTTL)
+		err = redis.AddPendingDelete(ctx, fmt.Sprintf("beacon/%s/%s", preName, info.ResourceName), expireAt)
+		if err != nil {
+			zap.L().Warn("AddPendingDelete failed", zap.Error(err))
 		}
+
 		return data, ext, nil
 	} else { // 可以直接获取到这张图片
 		data, err := s.CosClient.GetObjectByResourceName(resource.ResourceName, resource.ShortName)
@@ -91,86 +94,25 @@ func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height 
 	}
 }
 
-/*
-// GenerateBitmapAndSave 生成转换后 Bitmap 文件字段数据，并保存到 mysql（保存到腾讯云COS已经在cos_util里做了）
-func GenerateBitmapAndSave(resourceName, title, shortName, resourceType string, size, width, height int, bgColor string) error {
-	cosClient, err := util.NewClient(settings.Config.CosConfig)
+func (s *ResourceService) CleanExpiredCOSObjects(ctx context.Context) error {
+	paths, err := redis.GetExpiredPendingDeletePaths(ctx, time.Now())
 	if err != nil {
-		zap.L().Error("util.NewClient() failed", zap.Error(err))
-		return err
-	}
-	data, info, err := cosClient.GetObjectByResourceNameAndSvgToBitmap(resourceName, title, shortName, resourceType, size, width, height, bgColor)
-
-	// 构造数据库对象
-	now := time.Now().UTC()
-	record := settings.UniversityResources{
-		ResourceName: resourceName,
-		Title:        title,
-		ShortName:    shortName,
-		ResourceType: resourceType,
-		ResourceMd5:  info.ResourceMd5,
-		ResourceSizeB: sql.NullInt64{
-			Int64: info.ResourceSizeB,
-			Valid: true,
-		},
-		ResolutionWidth: sql.NullInt64{
-			Int64: info.ResolutionWidth,
-			Valid: true,
-		},
-		ResolutionHeight: sql.NullInt64{
-			Int64: info.ResolutionHeight,
-			Valid: true,
-		},
-		LastUpdateTime: sql.NullTime{
-			Time:  now,
-			Valid: true,
-		},
-		UploadTime: sql.NullTime{
-			Time:  now,
-			Valid: true,
-		},
-		ExpireTime: sql.NullTime{
-			Time:  now.Add(time.Hour),
-			Valid: true,
-		},
-		IsVector:    false,
-		IsBitmap:    true,
-		UsedForEdge: false,
-		IsDeleted:   false,
-		BackgroundColor: bgColor,
-	}
-	// 数据库插入
-	if err = mysql.InsertUniversityResource(record); err != nil {
-		zap.L().Error("mysql.InsertUniversityResource() failed", zap.Error(err))
 		return err
 	}
 
-	// data 可用于进一步处理，比如返回给 API
-	_ = data
-	return nil
-}
-*/
-
-// ClearExpiredCache 由 service 调用，负责业务流程协调
-func (s *ResourceService) ClearExpiredCache(expireDuration time.Duration) {
-	expiredResources, err := mysql.QueryExpiredResources(expireDuration)
-	if err != nil {
-		zap.L().Error("query expired resources failed", zap.Error(err))
-		return
-	}
-
-	for _, res := range expiredResources {
-		cosPath := "beacon/" + res.ShortName + "/" + res.ResourceName
-
-		// 删除 cos 上资源
-		if err = s.CosClient.DeleteObject(cosPath); err != nil {
-			zap.L().Error("delete cos object failed", zap.String("path", cosPath), zap.Error(err))
+	for _, path := range paths {
+		// 从腾讯云COS进行删除
+		err = s.CosClient.DeleteObject(path)
+		if err != nil {
+			zap.L().Error("Failed to delete COS object", zap.String("path", path), zap.Error(err))
 			continue
 		}
-
-		// 删除标记数据库资源
-		if err = mysql.MarkResourceDeleted(res.Id); err != nil {
-			zap.L().Error("mark resource deleted failed", zap.Int("id", res.Id), zap.Error(err))
+		// 删除成功后，从 Redis 集合移除
+		err = redis.RemovePendingDeletePaths(ctx, path)
+		if err != nil {
+			zap.L().Error("Failed to remove path from pending delete", zap.String("path", path), zap.Error(err))
 		}
+		zap.L().Info("Deleted expired COS object", zap.String("path", path))
 	}
+	return nil
 }
