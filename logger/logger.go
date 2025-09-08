@@ -1,6 +1,7 @@
 package logger
 
 import (
+	"fmt"
 	"logo_api/settings"
 	"net"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/natefinch/lumberjack"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -20,11 +20,20 @@ var lg *zap.Logger
 
 // Init 初始化Logger
 func Init(logger *settings.LogConfig) (err error) {
-	writeSyncer := getLogWriter(
-		logger.Filename,
-		logger.MaxSize,
-		logger.MaxBackups,
-		logger.MaxAge)
+	if logger == nil {
+		return fmt.Errorf("LogConfig is nil")
+	}
+
+	// 云函数环境直接输出到控制台
+	writeSyncer := zapcore.AddSync(os.Stdout)
+	/*
+		writeSyncer := getLogWriter(
+			logger.Filename,
+			logger.MaxSize,
+			logger.MaxBackups,
+			logger.MaxAge)
+
+	*/
 	encoder := getEncoder()
 	var l = new(zapcore.Level)
 	err = l.UnmarshalText([]byte(logger.Level))
@@ -53,13 +62,18 @@ func getEncoder() zapcore.Encoder {
 }
 
 func getLogWriter(filename string, maxSize, maxBackup, maxAge int) zapcore.WriteSyncer {
-	lumberJackLogger := &lumberjack.Logger{
-		Filename:   filename,
-		MaxSize:    maxSize,
-		MaxBackups: maxBackup,
-		MaxAge:     maxAge,
-	}
-	return zapcore.AddSync(lumberJackLogger)
+	// 直接输出到控制台（标准输出）
+	return zapcore.AddSync(os.Stdout)
+	/*
+		lumberJackLogger := &lumberjack.Logger{
+			Filename:   filename,
+			MaxSize:    maxSize,
+			MaxBackups: maxBackup,
+			MaxAge:     maxAge,
+		}
+		return zapcore.AddSync(lumberJackLogger)
+
+	*/
 }
 
 // GinLogger 接收gin框架默认的日志
