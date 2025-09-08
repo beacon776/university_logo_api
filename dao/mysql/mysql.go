@@ -15,7 +15,7 @@ var db *sqlx.DB
 // Init 初始化 *sqlx.DB，以便处理MySQL相关操作
 func Init(config *settings.MysqlConfig) (err error) {
 	// 注意这里用 %%2F，因为 fmt.Sprintf 会把 % 作为格式符号，如果用单%，会出错。
-	databaseSource := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8mb4&parseTime=True&loc=Asia%%2FShanghai",
+	databaseSource := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Asia%%2FShanghai",
 		config.User,
 		config.Password,
 		config.Host,
