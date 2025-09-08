@@ -20,7 +20,7 @@ type AppConfig struct {
 
 type AppSettings struct {
 	Host    string `mapstructure:"host"`
-	Port    string `mapstructure:"port"`
+	Port    int    `mapstructure:"port"`
 	Version string `mapstructure:"version"`
 	Mode    string `mapstructure:"mode"`
 	Name    string `mapstructure:"name"`
@@ -37,7 +37,7 @@ type LogConfig struct {
 
 type MysqlConfig struct {
 	Host         string `mapstructure:"host"`
-	Port         string `mapstructure:"port"`
+	Port         int    `mapstructure:"port"`
 	DBName       string `mapstructure:"dbname"`
 	User         string `mapstructure:"user"`
 	Password     string `mapstructure:"password"`
@@ -47,7 +47,7 @@ type MysqlConfig struct {
 
 type RedisConfig struct {
 	Host     string `mapstructure:"host"`
-	Port     string `mapstructure:"port"`
+	Port     int    `mapstructure:"port"`
 	Password string `mapstructure:"password"`
 	DB       int    `mapstructure:"db"`
 	PoolSize int    `mapstructure:"pool_size"`
@@ -98,17 +98,21 @@ type UniversityResources struct {
 	BackgroundColor  string        `db:"background_color"`
 }
 
-func Init() (err error) {
-	viper.SetConfigFile("./conf/config.yaml")
+func localInit() (err error) {
+	viper.SetConfigFile("conf/config.yaml")
+	// 读取文件（如果存在）
 	err = viper.ReadInConfig()
 	if err != nil {
 		panic(fmt.Errorf("Fatal error config file: %s \n", err))
 		return err
 	}
+	// 解析到结构体
 	if err = viper.Unmarshal(Config); err != nil {
 		fmt.Printf("viper.Unmarshal() err: %v\n", err)
 		return err
 	}
+
+	// 热更新（仅本地用）
 	viper.WatchConfig()
 	viper.OnConfigChange(func(e fsnotify.Event) {
 		fmt.Printf("Config file changed: %s\n", e.Name)
@@ -117,5 +121,105 @@ func Init() (err error) {
 			return
 		}
 	})
+	return nil
+}
+func Init() (err error) {
+	// 环境变量优先
+	viper.AutomaticEnv()
+
+	// 初始化指针，避免 nil
+	if Config.AppSettings == nil {
+		Config.AppSettings = &AppSettings{}
+	}
+	if Config.LogConfig == nil {
+		Config.LogConfig = &LogConfig{}
+	}
+	if Config.MysqlConfig == nil {
+		Config.MysqlConfig = &MysqlConfig{}
+	}
+	if Config.RedisConfig == nil {
+		Config.RedisConfig = &RedisConfig{}
+	}
+	if Config.CosConfig == nil {
+		Config.CosConfig = &CosConfig{}
+	}
+	// 环境变量
+	if host := viper.GetString("host"); host != "" {
+		Config.AppSettings.Host = host
+	}
+	if port := viper.GetInt("port"); port != 0 {
+		Config.AppSettings.Port = port
+	}
+	if version := viper.GetString("version"); version != "" {
+		Config.AppSettings.Version = version
+	}
+	if name := viper.GetString("name"); name != "" {
+		Config.AppSettings.Name = name
+	}
+	if mode := viper.GetString("mode"); mode != "" {
+		Config.AppSettings.Mode = mode
+	}
+	if level := viper.GetString("LOG_LEVEL"); level != "" {
+		Config.LogConfig.Level = level
+	}
+	if compress := viper.GetString("LOG_COMPRESS"); compress != "" {
+		Config.LogConfig.Compress = true
+	}
+	if host := viper.GetString("MYSQL_HOST"); host != "" {
+		Config.MysqlConfig.Host = host
+	}
+	if port := viper.GetString("MYSQL_PORT"); port != "" {
+		// 转 int，防止报错
+		var portInt int
+		_, err := fmt.Sscanf(port, "%d", &portInt)
+		if err != nil {
+			return fmt.Errorf("invalid MYSQL_PORT: %v", err)
+		}
+		Config.MysqlConfig.Port = portInt
+	}
+	if user := viper.GetString("MYSQL_USER"); user != "" {
+		Config.MysqlConfig.User = user
+	}
+	if pwd := viper.GetString("MYSQL_PASSWORD"); pwd != "" {
+		Config.MysqlConfig.Password = pwd
+	}
+	if dbname := viper.GetString("MYSQL_DBNAME"); dbname != "" {
+		Config.MysqlConfig.DBName = dbname
+	}
+
+	if host := viper.GetString("REDIS_HOST"); host != "" {
+		Config.RedisConfig.Host = host
+	}
+	if port := viper.GetInt("REDIS_PORT"); port != 0 {
+		Config.RedisConfig.Port = port
+	}
+	if password := viper.GetString("REDIS_PASSWORD"); password != "" {
+		Config.RedisConfig.Password = password
+	}
+	if db := viper.GetInt("REDIS_DB"); db != 0 {
+		Config.RedisConfig.DB = db
+	}
+	if poolSize := viper.GetInt("REDIS_POOL_SIZE"); poolSize != 0 {
+		Config.RedisConfig.PoolSize = poolSize
+	}
+	if bucketUrl := viper.GetString("COS_BUCKET_URL"); bucketUrl != "" {
+		Config.CosConfig.BucketUrl = bucketUrl
+	}
+	if secretId := viper.GetString("COS_SECRET_ID"); secretId != "" {
+		Config.CosConfig.SecretId = secretId
+	}
+	if secretKey := viper.GetString("COS_SECRET_KEY"); secretKey != "" {
+		Config.CosConfig.SecretKey = secretKey
+	}
+	// 解析到结构体
+	if err = viper.Unmarshal(Config); err != nil {
+		fmt.Printf("viper.Unmarshal() err: %v\n", err)
+		return err
+	}
+
+	// 打印确认
+	fmt.Println("MYSQL_HOST:", Config.MysqlConfig.Host)
+	fmt.Println("MYSQL_PORT:", Config.MysqlConfig.Port)
+
 	return nil
 }
