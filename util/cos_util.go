@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
+	"github.com/spf13/viper"
 	"github.com/tencentyun/cos-go-sdk-v5"
 	xdraw "golang.org/x/image/draw"
 
@@ -56,7 +57,7 @@ func NewClient(config *settings.CosConfig) (*CosClient, error) {
 
 // GetObjectByResourceName 直接从腾讯云COS上获取资源
 func (c *CosClient) GetObjectByResourceName(resourceName string, shortName string) (data []byte, err error) {
-	name := fmt.Sprintf("beacon/%s/%s", shortName, resourceName)
+	name := fmt.Sprintf("beacon/downloads/%s/%s", shortName, resourceName)
 	// 直接用 SDK 的 Get 方法拿到 io.ReadCloser
 	resp, err := c.Client.Object.Get(context.Background(), name, nil)
 	if err != nil {
@@ -85,7 +86,7 @@ func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, s
 	defer os.Remove(tmpFile.Name())
 	defer tmpFile.Close()
 
-	cosPath := fmt.Sprintf("beacon/%s/%s", shortName, resourceName)
+	cosPath := fmt.Sprintf("beacon/downloads/%s/%s", shortName, resourceName)
 	resp, err := c.Client.Object.Get(context.Background(), cosPath, nil)
 	if err != nil {
 		zap.L().Error("cos.Object.Get() err:", zap.Error(err))
@@ -168,7 +169,7 @@ func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, s
 		resBgColor = "#FFFFFF"
 	}
 	// 上传到腾讯云 COS
-	uploadCosPath := fmt.Sprintf("beacon/%s/%s", shortName, newFileName)
+	uploadCosPath := fmt.Sprintf("beacon/downloads/%s/%s", shortName, newFileName)
 	if err = c.UploadObject(bitmapPath, uploadCosPath); err != nil {
 		zap.L().Error("UploadObject() err:", zap.Error(err))
 		return nil, BitmapResourceInfo{}, err
@@ -190,14 +191,8 @@ func (c *CosClient) GetObjectByResourceNameAndSvgToBitmap(resourceName, title, s
 // ConvertSvgToBitmap 使用 rsvg-convert 命令行工具，对临时下载的 svg 文件进行转格式操作
 // 注意：rsvg-convert 只支持 svg 转 png，如果是其他格式的话，需要再调用 ConvertPngToOther
 func ConvertSvgToBitmap(svgPath, bitmapPath, resourceType string, size, width, height int, bgColor string) error {
+	runMode := viper.GetString("RUN_MODE") // 引入 runMode 变量
 	// 第一步：先进行 svg 转 png，格式校验放在 ConvertPngToOther 里
-	/*
-		// Win 调用 WSL 运行命令
-		svgPathWsl := windowsPathToWslPath(svgPath)
-		bitmapPathWsl := windowsPathToWslPath(bitmapPath)
-		// 构造参数
-		args := []string{"-f", resourceType, "-o", bitmapPathWsl, svgPathWsl}
-	*/
 	targetSize := size
 	if targetSize == 0 && width > 0 && height > 0 {
 		targetSize = min(width, height)
@@ -206,22 +201,30 @@ func ConvertSvgToBitmap(svgPath, bitmapPath, resourceType string, size, width, h
 		zap.L().Error("targetSize is zero")
 		return nil
 	}
+	var cmd *exec.Cmd
+	if runMode == "local" {
 
-	// Linux 下直接用路径 (Linux 服务器需要安装 librsvg2-bin（Debian/Ubuntu）或 librsvg2-tools（CentOS/Fedora）)
-	// 构造参数
-	args := []string{"-f", "png", "-o", bitmapPath, svgPath, "-w", fmt.Sprint(targetSize), "-h", fmt.Sprint(targetSize)} // rsvg-convert 必须用 -f png
-	if bgColor != "" {
-		args = append(args, "--background-color="+bgColor) // 注意这里，把背景参数加到最后
-	}
-	zap.L().Debug("Running rsvg-convert", zap.Strings("args", args))
-
-	/*
+		// Win 调用 WSL 运行命令
+		svgPathWsl := windowsPathToWslPath(svgPath)
+		bitmapPathWsl := windowsPathToWslPath(bitmapPath)
+		// 构造参数
+		args := []string{"-f", "png", "-o", bitmapPathWsl, svgPathWsl}
+		if bgColor != "" {
+			args = append(args, "--background-color="+bgColor)
+		}
 		// 调用 wsl 运行 rsvg-convert
-		cmd := exec.Command("wsl", append([]string{"rsvg-convert"}, args...)...)
-		output, err := cmd.CombinedOutput()
-	*/
+		cmd = exec.Command("wsl", append([]string{"rsvg-convert"}, args...)...)
+	} else {
+		// Linux/SCF 下直接用路径 (Linux 服务器需要安装 librsvg2-bin（Debian/Ubuntu）或 librsvg2-tools（CentOS/Fedora）)
+		// 构造参数
+		args := []string{"-f", "png", "-o", bitmapPath, svgPath, "-w", fmt.Sprint(targetSize), "-h", fmt.Sprint(targetSize)} // rsvg-convert 必须用 -f png
+		if bgColor != "" {
+			args = append(args, "--background-color="+bgColor) // 注意这里，把背景参数加到最后
+		}
+		zap.L().Debug("Running rsvg-convert", zap.Strings("args", args))
+		cmd = exec.Command("/opt/bin/rsvg-convert", args...) // 提前把 rsvg-convert 工具放进 SCF 的层里了
+	}
 
-	cmd := exec.Command("/opt/bin/rsvg-convert", args...) // 提前把 rsvg-convert 工具放进 SCF 的层里了
 	output, err := cmd.CombinedOutput()
 
 	if err != nil {
