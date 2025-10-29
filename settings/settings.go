@@ -58,44 +58,54 @@ type CosConfig struct {
 	SecretKey string `mapstructure:"secret_key"`
 }
 type Universities struct {
-	Slug                   string     `db:"slug"`
-	ShortName              string     `db:"short_name"`
-	Title                  string     `db:"title"`
-	Vis                    string     `db:"vis"`
-	Website                string     `db:"website"`
-	FullNameEn             string     `db:"full_name_en"`
-	Region                 string     `db:"region"`
-	Province               string     `db:"province"`
-	City                   string     `db:"city"`
-	Story                  string     `db:"story"`
-	HasVector              bool       `db:"has_vector"`
-	MainVectorFormat       string     `db:"main_vector_format"`
-	MainVectorSizeB        int        `db:"main_vector_size_b"`
-	HasBitmap              bool       `db:"has_bitmap"`
-	MainBitmapFormat       string     `db:"main_bitmap_format"`
-	MainBitmapSizeB        int        `db:"main_bitmap_size_b"`
-	ResourcesCount         int        `db:"resources_count"`
-	EdgeComputationInputId int        `db:"edge_computation_input_id"`
-	CreatedTime            *time.Time `db:"created_time"`
-	UpdatedTime            *time.Time `db:"updated_time"`
+	Slug             string         `db:"slug" json:"slug"`
+	ShortName        string         `db:"short_name" json:"short_name"`
+	Title            string         `db:"title" json:"title"`
+	Vis              sql.NullString `db:"vis" json:"vis"`
+	Website          string         `db:"website" json:"website"`
+	FullNameEn       string         `db:"full_name_en" json:"full_name_en"`
+	Region           string         `db:"region" json:"region"`
+	Province         string         `db:"province" json:"province"`
+	City             string         `db:"city" json:"city"`
+	Story            sql.NullString `db:"story" json:"story"`
+	HasVector        int            `db:"has_vector" json:"has_vector"`
+	MainVectorFormat sql.NullString `db:"main_vector_format" json:"main_vector_format"`
+	ResourceCount    int            `db:"resource_count" json:"resource_count"`
+	ComputationId    sql.NullInt64  `db:"computation_id" json:"computation_id"`
+	CreatedTime      *time.Time     `db:"created_time" json:"created_time"`
+	UpdatedTime      *time.Time     `db:"updated_time" json:"updated_time"`
 }
 
+type InitUniversities struct {
+	Slug       string `db:"slug" json:"slug"`
+	ShortName  string `db:"short_name" json:"short_name"`
+	Title      string `db:"title" json:"title"`
+	Vis        string `db:"vis" json:"vis"`
+	Website    string `db:"website" json:"website"`
+	FullNameEn string `db:"full_name_en" json:"full_name_en"`
+	Region     string `db:"region" json:"region"`
+	Province   string `db:"province" json:"province"`
+	City       string `db:"city" json:"city"`
+	Story      string `db:"story" json:"story"`
+}
+
+// UniversityResources 代表一个资源，同时用于数据库映射和JSON数据绑定
 type UniversityResources struct {
-	Title            string        `db:"title"`
-	Id               int           `db:"id"`
-	ShortName        string        `db:"short_name"`
-	ResourceName     string        `db:"resource_name"`
-	ResourceType     string        `db:"resource_type"`
-	ResourceMd5      string        `db:"resource_md5"`
-	ResourceSizeB    sql.NullInt64 `db:"resource_size_b"`
-	LastUpdateTime   sql.NullTime  `db:"last_update_time"`
-	IsVector         bool          `db:"is_vector"`
-	IsBitmap         bool          `db:"is_bitmap"`
-	ResolutionWidth  sql.NullInt64 `db:"resolution_width"`
-	ResolutionHeight sql.NullInt64 `db:"resolution_height"`
-	UsedForEdge      bool          `db:"used_for_edge"`
-	IsDeleted        bool          `db:"is_deleted"`
-	BackgroundColor  string        `db:"background_color"`
+	Title            string     `db:"title" json:"title" binding:"required"`
+	Id               int        `db:"id" json:"id"`
+	ShortName        string     `db:"short_name" json:"short_name" binding:"required"`
+	ResourceName     string     `db:"resource_name" json:"resource_name" binding:"required"`
+	ResourceType     string     `db:"resource_type" json:"resource_type" binding:"required"`
+	ResourceMd5      string     `db:"resource_md5" json:"resource_md5"`
+	ResourceSizeB    int        `db:"resource_size_b" json:"resource_size_b"`
+	LastUpdateTime   *time.Time `db:"last_update_time" json:"last_update_time"`
+	IsVector         int        `db:"is_vector" json:"is_vector"`
+	IsBitmap         int        `db:"is_bitmap" json:"is_bitmap"`
+	ResolutionWidth  int        `db:"resolution_width" json:"resolution_width"`
+	ResolutionHeight int        `db:"resolution_height" json:"resolution_height"`
+	UsedForEdge      int        `db:"used_for_edge" json:"used_for_edge"`
+	IsDeleted        int        `db:"is_deleted" json:"is_deleted"`
+	BackgroundColor  string     `db:"background_color" json:"background_color"`
 }
 
 func localInit() (err error) {
@@ -124,8 +134,18 @@ func localInit() (err error) {
 	return nil
 }
 func Init() (err error) {
-	// 环境变量优先
+	// 1. 检查运行模式环境变量
 	viper.AutomaticEnv()
+	runMode := viper.GetString("RUN_MODE") // 新引入的环境变量
+	// ⬇️ 临时调试代码
+	fmt.Printf("[DEBUG] Detected RUN_MODE: '%s'\n", runMode)
+	// 2. 如果是本地模式，使用 config.yaml
+	if runMode == "local" {
+		fmt.Println("[INFO] Running in LOCAL mode, loading conf/config.yaml...")
+		return localInit()
+	}
+	// 3. 否则，运行在云函数模式（或默认模式），主要依赖环境变量
+	fmt.Println("[INFO] Running in CLOUD/PRODUCTION mode, prioritizing environment variables...")
 
 	// 初始化指针，避免 nil
 	if Config.AppSettings == nil {
