@@ -1,0 +1,174 @@
+package mysql
+
+import (
+	"errors"
+	"go.uber.org/zap"
+	"logo_api/settings"
+
+	"gorm.io/gorm"
+)
+
+// GORM API 要点:
+// 1. Where() 替换 SQL WHERE 子句。
+// 2. First() 替换 db.Get() 查单条。
+// 3. Find() 替换 db.Select() 查多条。
+// 4. Create() 替换 db.NamedExec() 批量插入。
+// 5. Save() 或 Updates() 替换 UPDATE 语句。
+
+// QueryFromNameAndSvg 在后缀是Svg的情况下进行查询
+func QueryFromNameAndSvg(preName string, ext string) (settings.UniversityResources, error) {
+	var resource settings.UniversityResources
+
+	// GORM API 要点: 复合 WHERE 条件查询单条记录。
+	// 使用 First() 查找，GORM 自动添加 LIMIT 1
+	err := db.Where("(short_name = ? OR title = ?) AND resource_type = ?", preName, preName, ext).First(&resource).Error
+
+	// 查询出错
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) { // GORM 找不到记录时返回 gorm.ErrRecordNotFound
+			zap.L().Error("resource not found")
+			return resource, err // 返回 err 让上层知道是未找到
+		}
+		// 其他错误
+		zap.L().Error("db.First() err:", zap.Error(err))
+		return settings.UniversityResources{}, err
+	}
+	zap.L().Info("get svg resource:", zap.Any("resource", resource))
+	return resource, nil
+}
+
+// QueryFromNameAndBitmapInfo 根据文件名、后缀（保证为位图）、边长/宽+高、背景颜色参数查找对应的资源
+func QueryFromNameAndBitmapInfo(preName string, ext string, size int, width int, height int, bgColor string) (settings.UniversityResources, error) {
+	var resource settings.UniversityResources
+
+	// GORM API 要点: 复杂的 WHERE/OR 组合查询
+	// 使用 Where() 包含所有的 AND 条件
+	tx := db.Where("(short_name = ? OR title = ?) AND resource_type = ? AND is_deleted = 0 AND background_color = ?",
+		preName, preName, ext, bgColor)
+
+	// 使用 Or() 组合宽度/高度的 OR 逻辑
+	tx = tx.Where("(resolution_width = ? AND resolution_height = ?) OR (resolution_width = ? AND resolution_height = ?)",
+		size, size, width, height)
+
+	err := tx.First(&resource).Error // 执行第一次查询
+
+	// 第一次查询出错
+	if err != nil {
+		// 没查到
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			zap.L().Error("current resource not found, next will try to find svg resource")
+
+			// 虽然直接查没查到，但是还有机会查到 svg 资源，继续去查 svg 资源
+			// GORM 第二次查询: 查找用于 edge 的 SVG 资源
+			err = db.Where("(short_name = ? OR title = ?) AND used_for_edge = ?", preName, preName, 1).First(&resource).Error
+
+			// 第二次查询出错
+			if err != nil {
+				// svg 资源也没查到
+				if errors.Is(err, gorm.ErrRecordNotFound) {
+					zap.L().Error("svg resource was not founded as well, this bitmap resource could not be found")
+					return settings.UniversityResources{}, errors.New("bitmap and svg resource not found") // 返回一个更明确的错误
+				}
+				// 其他错误
+				zap.L().Error("db.First() err:", zap.Error(err))
+				return settings.UniversityResources{}, err
+			}
+			// 查到了 svg 资源
+			return resource, nil
+		}
+		// 其他错误
+		zap.L().Error("db.First() failed", zap.Error(err))
+		return settings.UniversityResources{}, err
+	}
+
+	// 直接查到了该资源
+	zap.L().Info("get bitmap resource:", zap.Any("resource", resource))
+	return resource, nil
+}
+
+// InsertUniversityResource 基于结构体数组+db.Create()方法，对 university_resources 表进行批量插入
+func InsertUniversityResource(universityResources []settings.UniversityResources) error {
+	// GORM API 要点: 批量插入。
+	// 对切片使用 db.Create()，GORM 自动处理字段映射和批量 INSERT
+	if len(universityResources) == 0 {
+		return nil
+	}
+
+	err := db.Create(&universityResources).Error
+	if err != nil {
+		zap.L().Error("InsertUniversityResource() failed", zap.Error(err))
+		return err
+	}
+
+	zap.L().Info("InsertUniversityResource() success", zap.Int("count", len(universityResources)))
+	return nil
+}
+
+func UpdateUniversityResource(universityResource settings.UniversityResources) error {
+	// GORM API 要点: 保存所有字段。
+	// db.Save() 会根据结构体的主键 (ID) 来执行 UPDATE 或 INSERT/UPDATE (Upsert)。
+	// 它会更新结构体中的所有字段（包括零值），这是最简单的全字段更新方法。
+	err := db.Save(&universityResource).Error
+
+	if err != nil {
+		zap.L().Error("UpdateUniversityResource() failed", zap.Error(err))
+		return err
+	}
+	zap.L().Info("UpdateUniversityResource() success", zap.Int("id", universityResource.ID))
+	return nil
+
+	// 如果只需要更新非零值，可以使用 db.Updates(&universityResource)。
+	// 如果只需要更新特定字段，可以使用 db.Model().Where("id = ?", universityResource.Id).Updates(map[string]interface{})
+}
+
+func DeleteUniversityResource(universityResource settings.UniversityResources) error {
+	// GORM API 要点: 软删除。
+	// 假设您的 model.UniversityResources 结构体中没有 gorm.DeletedAt 字段，我们使用 Updates 实现逻辑删除。
+
+	// db.Model() 指定要操作的对象
+	// db.Where() 指定要更新的记录
+	// db.Update() 更新单个字段
+	err := db.Model(&settings.UniversityResources{}).Where("id = ?", universityResource.ID).Update("is_deleted", 1).Error
+
+	// 如果您的结构体包含 gorm.DeletedAt 字段，则可以使用 db.Delete(&universityResource) 来触发 GORM 的内置软删除。
+
+	if err != nil {
+		zap.L().Error("DeleteUniversityResource() failed", zap.Error(err))
+		return err
+	}
+	zap.L().Info("DeleteUniversityResource() success", zap.Int("id", universityResource.ID))
+	return nil
+}
+
+func GetAllUniversityResources() ([]settings.UniversityResources, error) {
+	var universityResources []settings.UniversityResources
+
+	// GORM API 要点: 简单查询所有。
+	err := db.Find(&universityResources).Error
+
+	if err != nil {
+		zap.L().Error("GetAllUniversityResources() failed", zap.Error(err))
+		return nil, err
+	}
+	zap.L().Info("GetAllUniversityResources() success", zap.Int("count", len(universityResources)))
+	return universityResources, nil
+}
+
+func GetUniversityResourceByName(name string) (settings.UniversityResources, error) {
+	var result settings.UniversityResources
+
+	// GORM API 要点: WHERE 条件查询单条记录。
+	err := db.Where("resource_name = ?", name).First(&result).Error
+
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			zap.L().Error("resource not found")
+			return settings.UniversityResources{}, errors.New("resource not found")
+		}
+		zap.L().Error("GetUniversityResourceByName() failed", zap.Error(err))
+		return settings.UniversityResources{}, err
+	}
+
+	zap.L().Info("GetUniversityResourceByName() success", zap.String("name", name))
+	return result, nil
+}
