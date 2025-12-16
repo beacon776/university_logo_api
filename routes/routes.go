@@ -1,39 +1,53 @@
 package routes
 
 import (
-	"database/sql"
-	"errors"
-	"fmt"
+	"context"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"logo_api/auth"
 	"logo_api/logger"
+	"logo_api/routes/handler"
 	"logo_api/service"
-	"path/filepath"
-	"strconv"
-	"strings"
+	"net/http"
 )
 
 // Setup 注册接口
 func Setup(svc *service.ResourceService) *gin.Engine {
 	router := gin.New()
 	router.Use(logger.GinLogger(), logger.GinRecovery(true))
-	router.GET("/getLogo/:fullName", getLogoFromNameHandler(svc))
+	r1 := router.Group("/")
+	{
+		r1.POST("/user/register", handler.RegisterFunc(svc))
+		r1.POST("/user/login", handler.UserLogin(svc))
 
+		r1.POST("/clearCache", clearCache(svc))
+	}
+	user := router.Group("/user")
+	user.Use(auth.AuthRequired(svc))
+	{
+		user.GET("/list", handler.GetUserList(svc))
+		user.POST("/logout", handler.UserLogout(svc))
+		/*
+			user.POST("/update/:id", userUpdate(svc))
+			user.POST("/delete/:id", userDelete(svc))*/
+	}
+
+	university := router.Group("/university")
+	university.Use(auth.AuthRequired(svc))
+	{
+		university.GET("/list", handler.GetUniversityList(svc))
+		// 后台管理路由：增、删、改、查、登录
+		//university.POST("/insert", insertResourceHandler(svc))
+		university.GET("/:name", handler.GetUniversityFromName(svc))
+		university.POST("/insert", handler.InsertUniversity(svc))
+	}
+	resource := router.Group("/resource")
+	resource.Use(auth.AuthRequired(svc))
+	{
+		resource.GET("/getLogo/:fullName", handler.GetLogoFromNameHandler(svc))
+		resource.GET("/:name", handler.GetUniversityResource(svc))
+	}
 	return router
-}
-
-// parseQueryInt 解析输入url中的参数
-func parseQueryInt(c *gin.Context, key string) (int, error) {
-	valStr := c.DefaultQuery(key, "")
-	if valStr == "" {
-		return 0, nil
-	}
-	val, err := strconv.Atoi(valStr)
-	if err != nil {
-		zap.L().Error("parseQueryInt() err:", zap.Error(err))
-		return 0, fmt.Errorf("invalid %s: %v", key, err)
-	}
-	return val, nil
 }
 
 // respondWithError 用户传参失误时，code为400，err为nil; 系统内部错误时，code为500，err为真实err
@@ -50,89 +64,21 @@ func respondWithError(c *gin.Context, code int, msg string, err error, location 
 	})
 }
 
-// getContentType 根据需求图片类型，获取响应图片的类型
-func getContentType(ext string) string {
-	switch strings.ToLower(ext) {
-	case "png":
-		return "image/png"
-	case "jpg", "jpeg":
-		return "image/jpeg"
-	case "svg":
-		return "image/svg+xml"
-	case "webp":
-		return "image/webp"
-	default:
-		return "application/octet-stream"
-	}
-}
-
-// getLogoFromNameHandler 路由处理函数
-func getLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
+func clearCache(svc *service.ResourceService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var (
-			size   int
-			width  int
-			height int
-			err    error
-		)
-
-		fullName := c.Param("fullName")
-		ext := filepath.Ext(fullName)
-		ext = ext[1:] // 输入参数文件类型
-
-		// 解析 query 参数
-		bgColor := c.DefaultQuery("bg", "") // 例如 "#FFFFFF"
-
-		size, err = parseQueryInt(c, "size")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		result, err := svc.CleanExpiredCOSObjects(ctx)
 		if err != nil {
-			respondWithError(c, 400, err.Error(), nil, "parseQueryInt()")
+			zap.L().Error("CleanExpiredCOSObjects error", zap.Error(err))
+			respondWithError(c, 500, err.Error(), nil, "CleanExpiredCOSObjects")
 			return
 		}
-		width, err = parseQueryInt(c, "width")
-		if err != nil {
-			respondWithError(c, 400, err.Error(), nil, "parseQueryInt()")
-			return
-		}
-		height, err = parseQueryInt(c, "height")
-		if err != nil {
-			respondWithError(c, 400, err.Error(), nil, "parseQueryInt()")
-			return
-		}
-
-		// 加日志看看参数是否解析成功
-		zap.L().Info("Received params",
-			zap.Int("size", size),
-			zap.Int("width", width),
-			zap.Int("height", height),
-			zap.String("bg", bgColor),
-		)
-		data, ext, _, err := svc.GetLogo(fullName, bgColor, size, width, height) // 调用service层中的方法，对参数进行处理，具体的逻辑在 GetLogo 中的方法
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) { // 没查到
-				respondWithError(c, 404, "resource not found", nil, "GetLogo")
-			} else { // 其他错误
-				respondWithError(c, 500, "internal error", err, "GetLogo")
-			}
-			return
-		}
-
-		contentType := getContentType(ext)
-		/*
-			encodedData := base64.StdEncoding.EncodeToString(data)
-				c.Header("Content-Type", "application/json; charset=utf-8")
-				c.Header("Content-Disposition", "inline")
-				c.JSON(200, gin.H{
-					"code": 200,
-					"msg":  "OK",
-					"data": gin.H{
-						"name":   resourceName,
-						"type":   contentType,
-						"base64": encodedData,
-					},
-				})
-
-		*/
-		c.Header("Content-Disposition", "inline")
-		c.Data(200, contentType, data)
+		zap.L().Info("CleanExpiredCOSObjects success")
+		c.JSON(http.StatusOK, gin.H{
+			"code": 200,
+			"msg":  "cache clean success",
+			"data": result,
+		})
 	}
 }

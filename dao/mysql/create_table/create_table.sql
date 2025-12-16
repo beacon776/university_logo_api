@@ -2,14 +2,14 @@ USE logo_api;
 CREATE TABLE IF NOT EXISTS universities (
     slug CHAR(10) PRIMARY KEY NOT NULL COMMENT '教育部学校识别码',
     short_name VARCHAR(20) NOT NULL UNIQUE COMMENT '学校唯一英文简称id',
-    title VARCHAR(255) NOT NULL UNIQUE COMMENT '学校中文全称',
+    title VARCHAR(255) NOT NULL UNIQUE COLLATE utf8mb4_zh_0900_as_cs COMMENT '学校中文全称', -- MySQL 8.0 以上
     vis VARCHAR(255) COMMENT '视觉形象识别系统网址',
     website VARCHAR(255) NOT NULL COMMENT '学校官网网址',
     full_name_en VARCHAR(100) NOT NULL COMMENT '英文官方全称',
-    region VARCHAR(10) NOT NULL COMMENT '学校所在大区',
-    province VARCHAR(50) NOT NULL COMMENT '学校所在省份',
-    city VARCHAR(50) NOT NULL COMMENT '学校所在城市',
-    story TEXT COMMENT '学校故事简介',
+    region VARCHAR(10) NOT NULL COLLATE utf8mb4_zh_0900_as_cs COMMENT '学校所在大区',
+    province VARCHAR(50) NOT NULL COLLATE utf8mb4_zh_0900_as_cs COMMENT '学校所在省份',
+    city VARCHAR(50) NOT NULL COLLATE utf8mb4_zh_0900_as_cs COMMENT '学校所在城市',
+    story TEXT COLLATE utf8mb4_zh_0900_as_cs COMMENT '学校故事简介',
 
     has_vector TINYINT DEFAULT 0 COMMENT '是否有矢量格式(svg、ai、eps等),1=有,0=无',
     main_vector_format VARCHAR(10) COMMENT '主要矢量文件格式，如 svg、ai',
@@ -25,8 +25,8 @@ CREATE TABLE IF NOT EXISTS universities (
 CREATE TABLE IF NOT EXISTS university_resources (
     id INT PRIMARY KEY AUTO_INCREMENT COMMENT '资源id编号',
     short_name VARCHAR(20) NOT NULL COMMENT '学校唯一英文简称',
-    title VARCHAR(255) NOT NULL COMMENT '学校中文全称',
-    resource_name VARCHAR(512) NOT NULL COMMENT '资源名称',
+    title VARCHAR(255) NOT NULL COLLATE utf8mb4_zh_0900_as_cs COMMENT '学校中文全称',
+    resource_name VARCHAR(512) NOT NULL COLLATE utf8mb4_zh_0900_as_cs COMMENT '资源名称',
     resource_type VARCHAR(50) NOT NULL COMMENT '资源类型，如svg、png、zip、rar',
     resource_md5 CHAR(32) NOT NULL COMMENT '资源md5校验',
     resource_size_b INT NOT NULL COMMENT '资源总大小(B)',
@@ -41,3 +41,10 @@ CREATE TABLE IF NOT EXISTS university_resources (
     FOREIGN KEY (short_name) REFERENCES universities(short_name),
     FOREIGN KEY (title) REFERENCES universities(title)
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS users (
+    id INT PRIMARY KEY AUTO_INCREMENT COMMENT '用户id',
+    status INT COMMENT '用户启用状态 1 启用 0 禁用',
+    username VARCHAR(50) NOT NULL COMMENT '用户名',
+    password VARCHAR(256) NOT NULL COMMENT '用户密码'
+)

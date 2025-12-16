@@ -47,7 +47,7 @@ func NewClient(config *settings.CosConfig) (*CosClient, error) {
 	// 初始化客户端
 	client := cos.NewClient(b, &http.Client{
 		Transport: &cos.AuthorizationTransport{
-			SecretID:  config.SecretId,
+			SecretID:  config.SecretID,
 			SecretKey: config.SecretKey,
 		},
 	})

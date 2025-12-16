@@ -2,6 +2,7 @@ package redis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
@@ -12,6 +13,18 @@ import (
 )
 
 var rdb *redis.Client
+
+// GetClient 返回初始化后的 Redis 客户端实例
+// 外部包可以通过此函数获取 rdb 实例，进行操作。
+func GetClient() *redis.Client {
+	// 注意：这里假设 Init() 已经被调用并成功。
+	// 在生产环境中，需要在此处添加对 rdb 是否为 nil 的检查。
+	if rdb == nil {
+		zap.L().Error("GetClient", zap.Error(errors.New("redis client is nil")))
+		return nil
+	}
+	return rdb
+}
 
 const (
 	CacheKeyPrefix    = "logo_cache:"        // key1: hash -> cosPath
@@ -114,4 +127,45 @@ func RemovePendingDeletePaths(ctx context.Context, paths ...string) error {
 		interfaceSlice[i] = p
 	}
 	return rdb.ZRem(ctx, PendingDeleteZSET, interfaceSlice...).Err()
+}
+
+// 为用户Token黑名单新增方法
+
+const (
+	UserSessionKeyPrefix = "user_token:"      // 用户的当前有效 Token (单点登录)
+	TokenBlacklistPrefix = "token_blacklist:" // 登出或撤销的 Token
+)
+
+// SetUserSessionToken 存储用户 ID 对应的 Token，实现单点登录
+func SetUserSessionToken(ctx context.Context, userID int, token string, duration time.Duration) error {
+	key := fmt.Sprintf("%s%d", UserSessionKeyPrefix, userID)
+	return rdb.Set(ctx, key, token, duration).Err()
+}
+
+// GetUserSessionToken 获取用户 ID 对应的当前有效 Token
+func GetUserSessionToken(ctx context.Context, userID int) (string, error) {
+	key := fmt.Sprintf("%s%d", UserSessionKeyPrefix, userID)
+	return rdb.Get(ctx, key).Result()
+}
+
+// DeleteUserSessionToken 删除用户的 Session Token (用于登出)
+func DeleteUserSessionToken(ctx context.Context, userID int) error {
+	key := fmt.Sprintf("%s%d", UserSessionKeyPrefix, userID)
+	return rdb.Del(ctx, key).Err()
+}
+
+// BlacklistToken 将 Token 加入黑名单，使其提前失效
+func BlacklistToken(ctx context.Context, tokenString string, duration time.Duration) error {
+	key := TokenBlacklistPrefix + tokenString
+	return rdb.Set(ctx, key, "revoked", duration).Err() // Value 不重要，但需要 TTL
+}
+
+// IsTokenBlacklisted 检查 Token 是否在黑名单中
+func IsTokenBlacklisted(ctx context.Context, tokenString string) (bool, error) {
+	key := TokenBlacklistPrefix + tokenString
+	val, err := rdb.Exists(ctx, key).Result()
+	if err != nil {
+		return false, err
+	}
+	return val > 0, nil
 }

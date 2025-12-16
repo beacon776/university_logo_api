@@ -9,6 +9,7 @@ import (
 	"github.com/tencentyun/scf-go-lib/cloudfunction"
 	"github.com/tencentyun/scf-go-lib/events" // 这里才有 APIGatewayRequest
 	"go.uber.org/zap"
+	"logo_api/auth"
 	"logo_api/dao/mysql"
 	"logo_api/dao/redis"
 	"logo_api/logger"
@@ -36,33 +37,38 @@ func init() {
 		panic(fmt.Sprintf("settings.Init() failed: %s", err))
 	}
 
-	// 2.初始化日志
+	// 2. 初始化 Auth 层的密钥
+	if err := auth.InitJWTSecret(settings.Config.JWTSecret); err != nil {
+		panic(fmt.Sprintf("auth.InitJWTSecret() failed: %s", err))
+	}
+
+	// 3.初始化日志
 	if err := logger.Init(settings.Config.LogConfig); err != nil {
 		panic(fmt.Sprintf("logger.Init() failed: %s", err))
 	}
 	zap.L().Info("Logger init success")
 
-	// 3.初始化 MySQL
+	// 4.初始化 MySQL
 	if err := mysql.Init(settings.Config.MysqlConfig); err != nil {
 		panic(fmt.Sprintf("mysql.Init() failed: %s", err))
 	}
 
-	// 4.初始化 Redis
+	// 5.初始化 Redis
 	if err := redis.Init(settings.Config.RedisConfig); err != nil {
 		panic(fmt.Sprintf("redis.Init() failed: %s", err))
 	}
-	// 5.初始化 COS
+	// 6.初始化 COS
 	var err error
 	client, err = util.NewClient(settings.Config.CosConfig)
 	if err != nil {
 		panic(fmt.Sprintf("util.NewClient failed: %s", err))
 	}
-	// 6.初始化 ResourceService（全局）
+	// 7.初始化 ResourceService（全局）
 	svc = service.NewResourceService(client)
-	// 7.注册路由
+	// 8.注册路由
 	r = routes.Setup(svc)
 
-	// 8. 统一监听端口，启动 Gin 服务
+	// 9. 统一监听端口，启动 Gin 服务
 	port := os.Getenv("PORT") // SCF 会自动注入 PORT 环境变量（一般是 9000）
 	if port == "" {
 		port = "9000"
@@ -101,8 +107,8 @@ func main() {
 			} // 确保使用实际监听的端口
 
 			clearCacheURL := fmt.Sprintf("http://%s:%s/clearCache", host, port)
-
-			ticker := time.NewTicker(1 * time.Minute) // 本体调试，每1min删除一次缓存
+			ticker := time.NewTicker(1 * time.Hour) // 调试，每1h删除一次缓存
+			//ticker := time.NewTicker(1 * time.Minute) // 调试，每1min删除一次缓存
 			defer ticker.Stop()
 
 			// 立即执行一次清理（可选）
