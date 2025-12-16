@@ -21,7 +21,7 @@ func QueryFromNameAndSvg(preName string, ext string) (settings.UniversityResourc
 
 	// GORM API 要点: 复合 WHERE 条件查询单条记录。
 	// 使用 First() 查找，GORM 自动添加 LIMIT 1
-	err := db.Where("(short_name = ? OR title = ?) AND resource_type = ?", preName, preName, ext).First(&resource).Error
+	err := db.Where("(short_name = ? OR title = ?) AND resource_type = ? AND is_deleted = ?", preName, preName, ext, 0).First(&resource).Error
 
 	// 查询出错
 	if err != nil {
@@ -43,12 +43,12 @@ func QueryFromNameAndBitmapInfo(preName string, ext string, size int, width int,
 
 	// GORM API 要点: 复杂的 WHERE/OR 组合查询
 	// 使用 Where() 包含所有的 AND 条件
-	tx := db.Where("(short_name = ? OR title = ?) AND resource_type = ? AND is_deleted = 0 AND background_color = ?",
-		preName, preName, ext, bgColor)
+	tx := db.Where("(short_name = ? OR title = ?) AND resource_type = ? AND is_deleted = 0 AND background_color = ? AND is_deleted = ?",
+		preName, preName, ext, bgColor, 0)
 
 	// 使用 Or() 组合宽度/高度的 OR 逻辑
-	tx = tx.Where("(resolution_width = ? AND resolution_height = ?) OR (resolution_width = ? AND resolution_height = ?)",
-		size, size, width, height)
+	tx = tx.Where("(resolution_width = ? AND resolution_height = ?) OR (resolution_width = ? AND resolution_height = ? AND is_deleted = ?)",
+		size, size, width, height, 0)
 
 	err := tx.First(&resource).Error // 执行第一次查询
 
@@ -144,7 +144,7 @@ func GetAllUniversityResources() ([]settings.UniversityResources, error) {
 	var universityResources []settings.UniversityResources
 
 	// GORM API 要点: 简单查询所有。
-	err := db.Find(&universityResources).Error
+	err := db.Where("is_deleted = ?", 0).Find(&universityResources).Error
 
 	if err != nil {
 		zap.L().Error("GetAllUniversityResources() failed", zap.Error(err))
@@ -158,7 +158,7 @@ func GetUniversityResourceByName(name string) (settings.UniversityResources, err
 	var result settings.UniversityResources
 
 	// GORM API 要点: WHERE 条件查询单条记录。
-	err := db.Where("resource_name = ?", name).First(&result).Error
+	err := db.Where("resource_name = ? and is_deleted = ?", name, 0).First(&result).Error
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
