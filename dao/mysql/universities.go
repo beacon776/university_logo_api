@@ -2,6 +2,7 @@ package mysql
 
 import (
 	"errors"
+	"fmt"
 	"go.uber.org/zap"
 	"logo_api/model"
 	"logo_api/settings"
@@ -250,4 +251,38 @@ func GetUniversityList(page, pageSize int, keyword, sortBy, sortOrder string) (u
 	}
 
 	return universities, totalCount, nil
+}
+
+// UpdateUniversities 根据传入的 model.Universities 数组，更新 universities 表
+func UpdateUniversities(universities []model.Universities) error {
+	if len(universities) == 0 {
+		zap.L().Info("UpdateUniversities() no universities")
+		return nil
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, v := range universities {
+			// 1. 检查主键是否存在
+			if v.Slug == "" {
+				return fmt.Errorf("university slug cannot be empty")
+			}
+			// 2. 执行更新
+			// 使用 Select("*") 或将结构体转为 map 可以强制更新零值
+			// 这里指定 Model 为 Universities 结构体对应的表
+			result := tx.Model(&model.Universities{}).
+				Omit("CreatedTime", "UpdatedTime").
+				Where("slug = ?", v.Slug).
+				Updates(&v) // 如果 v 中是字段是指针，nil 不更新，非 nil 的零值会更新
+			if result.Error != nil {
+				zap.L().Error("UpdateUniversities failed", zap.Error(result.Error), zap.String("slug", v.Slug))
+				return result.Error // 返回错误，事务会自动回滚
+			}
+			// 如果没有匹配到行，报错
+			if result.RowsAffected == 0 {
+				// 这里仅记录日志，不中断事务。
+				zap.L().Warn("No record found to update", zap.String("slug", v.Slug))
+			}
+		}
+		zap.L().Info("UpdateUniversities() success", zap.Int("count", len(universities)))
+		return nil // 返回 nil，事务会提交
+	})
 }

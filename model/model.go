@@ -54,6 +54,30 @@ type Universities struct {
 	UpdatedTime *time.Time `gorm:"column:updated_time" json:"updated_time"`
 }
 
+/*
+// UpdateUniversity 用于请求更新 University 的结构体
+type UpdateUniversity struct {
+	Slug      string `gorm:"column:slug;primaryKey" json:"slug"`
+	ShortName string `gorm:"column:short_name" json:"short_name"`
+	Title     string `gorm:"column:title" json:"title"`
+	// 使用 *string 处理 NULL 字段
+	Vis        *string `gorm:"column:vis" json:"vis"`
+	Website    string  `gorm:"column:website" json:"website"`
+	FullNameEn string  `gorm:"column:full_name_en" json:"full_name_en"`
+	Region     string  `gorm:"column:region" json:"region"`
+	Province   string  `gorm:"column:province" json:"province"`
+	City       string  `gorm:"column:city" json:"city"`
+	Story      *string `gorm:"column:story" json:"story"`
+
+	HasVector        int     `gorm:"column:has_vector" json:"has_vector"`
+	MainVectorFormat *string `gorm:"column:main_vector_format" json:"main_vector_format"`
+	ResourceCount    int     `gorm:"column:resource_count" json:"resource_count"`
+	ComputationId    *int    `gorm:"column:computation_id" json:"computation_id"`
+
+	CreatedTime *time.Time `gorm:"column:created_time" json:"created_time"`
+}
+*/
+
 // UniversityResources 代表一个资源，同时用于数据库映射和JSON数据绑定
 type UniversityResources struct {
 	// ID 是 GORM 默认的主键，但为了清晰，我们显式设置 column
