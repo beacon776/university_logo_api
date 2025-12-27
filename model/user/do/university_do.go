@@ -1,21 +1,8 @@
-package model
+package do
 
-/*
-// Response 是所有 API 调用的统一返回结构。
-// 使用 T 泛型（如果你的 Go 版本支持）或 interface{} 来适应 Data 字段
-// 如果 Go 版本低于 1.18，使用 interface{}
+import "time"
 
-	type Response struct {
-		Code    int    `json:"code"`    // HTTP 状态码或自定义业务码 (例如 0 表示成功, >0 表示失败)
-		Message string `json:"message"` // 响应的文字信息
-		// Data 字段用来承载实际的业务数据（例如 University 结构体或列表）
-		Data interface{} `json:"data"` // 实际的业务数据
-	}
-*/
-
-/*
-// UpdateUniversity 用于请求更新 University 的结构体
-type UpdateUniversity struct {
+type University struct {
 	Slug      string `gorm:"column:slug;primaryKey" json:"slug"`
 	ShortName string `gorm:"column:short_name" json:"short_name"`
 	Title     string `gorm:"column:title" json:"title"`
@@ -31,8 +18,8 @@ type UpdateUniversity struct {
 	HasVector        int     `gorm:"column:has_vector" json:"has_vector"`
 	MainVectorFormat *string `gorm:"column:main_vector_format" json:"main_vector_format"`
 	ResourceCount    int     `gorm:"column:resource_count" json:"resource_count"`
-	ComputationId    *int    `gorm:"column:computation_id" json:"computation_id"`
+	ComputationID    *int    `gorm:"column:computation_id" json:"computation_id"`
 
 	CreatedTime *time.Time `gorm:"column:created_time" json:"created_time"`
+	UpdatedTime *time.Time `gorm:"column:updated_time" json:"updated_time"`
 }
-*/

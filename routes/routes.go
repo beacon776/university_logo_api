@@ -17,16 +17,16 @@ func Setup(svc *service.ResourceService) *gin.Engine {
 	router.Use(logger.GinLogger(), logger.GinRecovery(true))
 	r1 := router.Group("/")
 	{
-		r1.POST("/user/register", handler.RegisterFunc(svc))
-		r1.POST("/user/login", handler.UserLogin(svc))
+		r1.POST("/user/register", handler.RegisterFunc())
+		r1.POST("/user/login", handler.UserLogin())
 
 		r1.POST("/clearCache", clearCache(svc))
 	}
 	user := router.Group("/user")
 	user.Use(auth.AuthRequired(svc))
 	{
-		user.GET("/list", handler.GetUserList(svc))
-		user.POST("/logout", handler.UserLogout(svc))
+		user.POST("/list", handler.GetUserList())
+		user.POST("/logout", handler.UserLogout())
 		/*
 			user.POST("/update/:id", userUpdate(svc))
 			user.POST("/delete/:id", userDelete(svc))*/
@@ -35,17 +35,17 @@ func Setup(svc *service.ResourceService) *gin.Engine {
 	university := router.Group("/university")
 	university.Use(auth.AuthRequired(svc))
 	{
-		university.GET("/list", handler.GetUniversityList(svc))
+		university.POST("/list", handler.GetUniversityList())
 		// 后台管理路由：增、删、改、查、登录
-		//university.POST("/insert", insertResourceHandler(svc))
-		university.GET("/:name", handler.GetUniversityFromName(svc))
-		university.POST("/insert", handler.InsertUniversity(svc))
+		university.GET("/:name", handler.GetUniversityFromName())
+		university.POST("/insert", handler.InsertUniversity())
+		university.POST("/update/:name", handler.UpdateUniversities())
 	}
 	resource := router.Group("/resource")
 	resource.Use(auth.AuthRequired(svc))
 	{
 		resource.GET("/getLogo/:fullName", handler.GetLogoFromNameHandler(svc))
-		resource.GET("/:name", handler.GetUniversityResource(svc))
+		resource.GET("/:name", handler.GetUniversityResource())
 	}
 	return router
 }

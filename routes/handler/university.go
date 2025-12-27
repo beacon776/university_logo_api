@@ -4,171 +4,139 @@ import (
 	"fmt"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
+	"logo_api/dao/mysql"
 	"logo_api/model"
+	"logo_api/model/user/do"
+	"logo_api/model/user/dto"
+	"logo_api/model/user/vo"
 	"logo_api/service"
-	"net/http"
 	"strconv"
 	"strings"
 )
 
-func GetUniversityFromName(svc *service.ResourceService) gin.HandlerFunc {
+func GetUniversityFromName() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		name := c.Param("name")
+		name := c.Param("name") // path param
 		// 手动把半角转圆角
 		name = strings.ReplaceAll(name, "(", "（")
 		name = strings.ReplaceAll(name, ")", "）")
-		university, err := svc.GetUniversityFromName(name)
+		university, err := service.GetUniversityFromName(name)
 		if err != nil {
 			zap.L().Error("getUniversityFromName() failed", zap.Error(err))
-			// 资源未找到 (Service 层返回特定错误或 nil)
-			c.JSON(http.StatusNotFound, model.Response{
-				Code:    http.StatusNotFound,
-				Message: "Resource not exist",
-				Data:    nil,
-			})
+			// 资源未找到
+			model.Error(c, model.CodeNotFound)
 			return
 		}
+		// 找到资源
 		zap.L().Info("getUniversityFromName() success", zap.String("name", name))
 		// c.JSON() 自动完成结构体到 JSON 的序列化
-		c.JSON(http.StatusOK, model.Response{
-			Code:    http.StatusOK, // 200
-			Message: "success",
-			Data:    university, // 自动序列化为 {"slug": "...", "title": "...", ...}
-		})
+		model.Success(c, university)
 	}
 }
 
-func InsertUniversity(svc *service.ResourceService) gin.HandlerFunc {
+func InsertUniversity() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var u []model.ReqInsertUniversity
+		var u []dto.UniversityInsertReq
 		if err := c.ShouldBindJSON(&u); err != nil {
 			zap.L().Error("InsertUniversity() bind error", zap.Error(err))
-			c.JSON(http.StatusBadRequest, model.Response{
-				Code:    http.StatusBadRequest,
-				Message: err.Error(),
-			})
+			model.Error(c, model.CodeServerErr)
 			return
 		}
-		if err := svc.InsertUniversity(u); err != nil {
+		if err := service.InsertUniversity(u); err != nil {
 			zap.L().Error("InsertUniversity() insert error", zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: err.Error(),
-			})
+			model.Error(c, model.CodeServerErr)
 			return
 		}
-		c.JSON(http.StatusOK, model.Response{
-			Code:    http.StatusOK,
-			Message: "Successfully inserted " + strconv.Itoa(len(u)) + " universities.",
-		})
+		zap.L().Info("InsertUniversity() success", zap.Int("success count", len(u)))
+		model.SuccessEmpty(c, "Successfully inserted "+strconv.Itoa(len(u))+" universities.")
 	}
 }
 
-func GetUniversityList(svc *service.ResourceService) gin.HandlerFunc {
+func GetUniversityList() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		pageStr := c.DefaultQuery("page", "1")
-		pageSizeStr := c.DefaultQuery("pageSize", "10")
-		keyword := c.DefaultQuery("keyword", "")
-
-		// 手动把半角转圆角
-		keyword = strings.ReplaceAll(keyword, "(", "（")
-		keyword = strings.ReplaceAll(keyword, ")", "）")
-
-		sortBy := c.DefaultQuery("sortBy", "id")
-		sortOrder := c.DefaultQuery("sortOrder", "asc")
-
-		// 统一处理空值和默认值(调 apifox 时，即使字段为空，也会传入空字符串，因此需要手动处理空字符串)
-		if pageStr == "" {
-			pageStr = "1"
+		var req dto.UniversityGetListReq
+		// 如果 Request Body 不为空，才进行 JSON 绑定
+		if c.Request.ContentLength > 0 {
+			if err := c.ShouldBindJSON(&req); err != nil {
+				zap.L().Error("GetUniversityList() bind error", zap.Error(err))
+				model.Error(c, model.CodeInvalidParam)
+				return
+			}
 		}
-		if pageSizeStr == "" {
-			pageSizeStr = "10"
+		// 允许空参数的存在
+		zap.L().Info("receive request body", zap.Any("req", req))
+		// 设置默认值
+		if req.Page <= 0 {
+			req.Page = 1
 		}
-		if sortBy == "" {
-			sortBy = "title"
+		if req.PageSize <= 0 {
+			req.PageSize = 10
 		}
-		if sortOrder == "" {
-			sortOrder = "asc"
+		if req.SortBy == "" {
+			req.SortBy = "title"
 		}
+		if req.SortOrder == "" {
+			req.SortOrder = "asc"
+		}
+		// 半角转圆角
+		req.Keyword = strings.ReplaceAll(req.Keyword, "(", "（")
+		req.Keyword = strings.ReplaceAll(req.Keyword, ")", "）")
 
-		// 将字符串转换为整数 (int)
-		page, err := strconv.Atoi(pageStr)
-		if err != nil {
-			zap.L().Error("strconv.Atoi(pageStr) Error", zap.String("pageStr", pageStr), zap.Error(err), zap.String("keyword", keyword))
-			// 处理错误：如果转换失败，返回 400 错误给客户端
-			c.JSON(400, model.Response{
-				Code:    400,
-				Message: "Invalid page parameter",
-				Data:    nil,
-			})
-			return
-		}
-
-		pageSize, err := strconv.Atoi(pageSizeStr)
-		if err != nil {
-			zap.L().Error("strconv.Atoi(pageSizeStr) Error", zap.String("pageSizeStr", pageSizeStr), zap.Error(err), zap.String("keyword", keyword))
-			// 处理错误：如果转换失败，返回 400 错误给客户端
-			c.JSON(400, model.Response{
-				Code:    400,
-				Message: "Invalid page parameter",
-				Data:    nil,
-			})
-			return
-		}
-
-		// 参数有效性检查（推荐）
+		// 参数有效性检查
 		// 确保 page 和 pageSize 是正数
-		if page <= 0 || pageSize <= 0 {
-			c.JSON(400, model.Response{
-				Code:    400,
-				Message: "Invalid page parameter, page and pageSize must be greater than 0.",
-				Data:    nil,
-			})
+		if req.Page <= 0 || req.PageSize <= 0 {
+			model.Error(c, model.CodeInvalidParam, "Invalid page parameter, page and pageSize must be greater than 0.")
 			return
 		}
-		universities, totalCount, err := svc.GetUniversityList(page, pageSize, keyword, sortBy, sortOrder)
+		universities, totalCount, err := mysql.GetUniversityList(req)
 		if err != nil {
-			zap.L().Error("svc.GetUniversityList() failed", zap.Error(err), zap.Int("page", page), zap.Int("pageSize", pageSize), zap.String("keyword", keyword))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: err.Error(),
-				Data:    nil,
-			})
+			zap.L().Error("svc.GetUniversityList() failed", zap.Error(err), zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.String("keyword", req.Keyword))
+			model.Error(c, model.CodeServerErr)
 			return
 		}
 
 		// 根据 totalCount 进行判断
-		if totalCount == 0 && keyword != "" {
+		if totalCount == 0 && req.Keyword != "" {
 			// 如果 totalCount 为 0 且用户使用了 keyword 进行搜索
 
 			// 保持 200，但修改 Message
 			// 客户端看到 200 状态码知道接口运行正常，但可以根据 Message 提示用户
-			message := fmt.Sprintf("No universities found matching keyword '%s'", keyword)
-			zap.L().Info(message, zap.Int("page", page), zap.Int("pageSize", pageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", keyword))
-
-			c.JSON(http.StatusOK, model.Response{
-				Code:    http.StatusOK,
-				Message: message,
-				Data: gin.H{
-					"list":       universities, // list 为空 []
-					"page":       page,
-					"pageSize":   pageSize,
-					"totalCount": totalCount, // totalCount 为 0
-				},
-			})
+			message := fmt.Sprintf("No universities found matching keyword '%s'", req.Keyword)
+			zap.L().Info(message, zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
+			var resp vo.UniversityListResp
+			resp.List = universities
+			resp.Page = req.Page
+			resp.PageSize = req.PageSize
+			resp.TotalCount = int(totalCount)
+			model.Success(c, resp, message)
 			return
 		}
+		// 查找成功
+		zap.L().Info("Success get university list", zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
+		var resp vo.UniversityListResp
+		resp.List = universities
+		resp.Page = req.Page
+		resp.PageSize = req.PageSize
+		resp.TotalCount = int(totalCount)
+		model.Success(c, resp)
+	}
+}
 
-		zap.L().Info("Success get university list", zap.Int("page", page), zap.Int("pageSize", pageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", keyword))
-		c.JSON(200, model.Response{
-			Code:    http.StatusOK,
-			Message: "Success get university list",
-			Data: gin.H{
-				"list":       universities,
-				"page":       page,
-				"pageSize":   pageSize,
-				"totalCount": totalCount,
-			},
-		})
+func UpdateUniversities() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var universities []do.University
+		if err := c.ShouldBindJSON(&universities); err != nil {
+			zap.L().Error("c.ShouldBindJSON(&universities) failed", zap.Error(err))
+			model.Error(c, model.CodeInvalidParam)
+			return
+		}
+		if err := service.UpdateUniversities(universities); err != nil {
+			zap.L().Error("svc.UpdateUniversities() failed", zap.Error(err))
+			model.Error(c, model.CodeServerErr)
+			return
+		}
+		// 成功
+		zap.L().Info("Success update universities", zap.Int("count", len(universities)))
+		model.Success(c, universities)
 	}
 }

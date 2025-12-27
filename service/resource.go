@@ -10,24 +10,14 @@ import (
 	"go.uber.org/zap"
 	"logo_api/dao/mysql"
 	"logo_api/dao/redis"
-	"logo_api/model"
+	"logo_api/model/user/do"
+	"logo_api/model/user/dto"
 	"logo_api/settings"
 	"logo_api/util"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 )
-
-// toPtrString 返回一个指向给定字符串值的指针
-func toPtrString(s string) *string {
-	return &s
-}
-
-// toPtrInt 返回一个指向给定整数值的指针
-func toPtrInt(i int) *int {
-	return &i
-}
 
 // 定义一个结果结构体
 type CleanResult struct {
@@ -72,10 +62,13 @@ func generateCacheKey(preName, ext, bgColor string, size, width, height int) str
 }
 
 // GetLogo 获取logo文件二进制数据、相关字段数据
-func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height int) ([]byte, string, string, error) {
-	ext := filepath.Ext(fullName)[1:]              // 去掉点
-	preName := fullName[:len(fullName)-len(ext)-1] // 英文缩写 / 中文全称
-
+func (svc *ResourceService) GetLogo(req dto.ResourceGetLogoReq) ([]byte, string, string, error) {
+	ext := req.Type     // 去掉点
+	preName := req.Name // 英文缩写 / 中文全称
+	size := req.Size
+	width := req.Width
+	height := req.Height
+	bgColor := req.BgColor
 	ctx := context.Background()
 	// 1. 缓存查找 (仅对位图进行缓存查找)
 	if ext != "svg" {
@@ -87,7 +80,7 @@ func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height 
 			if len(parts) >= 3 {
 				shortName := parts[1]
 				resourceName := parts[2]
-				data, err := s.CosClient.GetObjectByResourceName(resourceName, shortName)
+				data, err := svc.CosClient.GetObjectByResourceName(resourceName, shortName)
 				if err == nil {
 					zap.L().Info("Cache Hit - Serving from COS via Redis mapping", zap.String("key", cacheKey))
 					return data, ext, resourceName, nil
@@ -123,7 +116,7 @@ func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height 
 
 	// 如果是 svg 转出来的位图，说明缓存没有生效
 	if ext != "svg" && resource.ResourceType == "svg" {
-		data, info, err := s.CosClient.GetObjectByResourceNameAndSvgToBitmap(
+		data, info, err := svc.CosClient.GetObjectByResourceNameAndSvgToBitmap(
 			resource.ResourceName, resource.Title, resource.ShortName,
 			ext, size, width, height, bgColor,
 		)
@@ -156,7 +149,7 @@ func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height 
 		return data, ext, info.ResourceName, nil
 	}
 	// 可以直接获取到这张图片
-	data, err := s.CosClient.GetObjectByResourceName(resource.ResourceName, resource.ShortName)
+	data, err := svc.CosClient.GetObjectByResourceName(resource.ResourceName, resource.ShortName)
 	if err != nil {
 		zap.L().Error("CosClient.GetObjectByResourceName() failed", zap.Error(err))
 		return nil, ext, "", err
@@ -166,7 +159,7 @@ func (s *ResourceService) GetLogo(fullName, bgColor string, size, width, height 
 }
 
 // CleanExpiredCOSObjects 清理过期的 COS 对象 以及 Redis 对象
-func (s *ResourceService) CleanExpiredCOSObjects(ctx context.Context) (*CleanResult, error) {
+func (svc *ResourceService) CleanExpiredCOSObjects(ctx context.Context) (*CleanResult, error) {
 	encodedPaths, err := redis.GetExpiredPendingDeletePaths(ctx, time.Now())
 	if err != nil {
 		return nil, err
@@ -200,7 +193,7 @@ func (s *ResourceService) CleanExpiredCOSObjects(ctx context.Context) (*CleanRes
 
 		// 2. 从腾讯云COS进行删除
 		// 传入 COS DeleteObject 的必须是 DECODED 原始路径
-		err = s.CosClient.DeleteObject(cosPath)
+		err = svc.CosClient.DeleteObject(cosPath)
 		if err != nil {
 			// COS 删除失败：不从 ZSET 和 Key 2 中移除，等待下一次重试
 			zap.L().Error("Failed to delete COS object", zap.String("path", cosPath), zap.Error(err))
@@ -234,7 +227,7 @@ func (s *ResourceService) CleanExpiredCOSObjects(ctx context.Context) (*CleanRes
 }
 
 // InsertResource 插入资源. 不需要插入Redis缓存，缓存只给转换后的图片使用
-func (s *ResourceService) InsertResource(resource []settings.UniversityResources) error {
+func InsertResource(resource []settings.UniversityResources) error {
 	// 先插 university_resources 表的数据，然后查找
 	if err := mysql.InsertUniversityResource(resource); err != nil {
 		zap.L().Error("mysql.InsertUniversityResource() failed", zap.Error(err))
@@ -244,7 +237,7 @@ func (s *ResourceService) InsertResource(resource []settings.UniversityResources
 	return nil
 }
 
-func (s *ResourceService) UpdateResource(resource settings.UniversityResources) error {
+func UpdateResource(resource settings.UniversityResources) error {
 	if err := mysql.UpdateUniversityResource(resource); err != nil {
 		zap.L().Error("mysql.UpdateUniversityResource() failed", zap.Error(err))
 		return err
@@ -253,156 +246,22 @@ func (s *ResourceService) UpdateResource(resource settings.UniversityResources) 
 	return nil
 }
 
-func (s *ResourceService) GetUniversityFromName(name string) (model.Universities, error) {
+func GetUniversityResourceFromName(name string) (do.Resource, error) {
 	var (
-		daoUniversity  settings.Universities
-		respUniversity model.Universities
-		err            error
-	)
-	if daoUniversity, err = mysql.GetUniversityByName(name); err != nil {
-		zap.L().Error("mysql.GetUniversityByName() failed", zap.Error(err))
-		return model.Universities{}, err
-	}
-	respUniversity = model.Universities{
-		Slug:             daoUniversity.Slug,
-		ShortName:        daoUniversity.ShortName,
-		Title:            daoUniversity.Title,
-		Website:          daoUniversity.Website,
-		FullNameEn:       daoUniversity.FullNameEn,
-		Region:           daoUniversity.Region,
-		Province:         daoUniversity.Province,
-		City:             daoUniversity.City,
-		HasVector:        daoUniversity.HasVector,
-		ResourceCount:    daoUniversity.ResourceCount,
-		CreatedTime:      daoUniversity.CreatedTime,
-		UpdatedTime:      daoUniversity.UpdatedTime,
-		Vis:              daoUniversity.Vis,
-		Story:            daoUniversity.Story,
-		MainVectorFormat: daoUniversity.MainVectorFormat,
-		ComputationId:    daoUniversity.ComputationID,
-	}
-	zap.L().Info("getUniversityFromName() success", zap.String("name", name))
-	return respUniversity, nil
-}
-
-func (s *ResourceService) GetUniversityResourceFromName(name string) (model.UniversityResources, error) {
-	var (
-		daoUniversity  settings.UniversityResources
-		respUniversity model.UniversityResources
-		err            error
+		daoUniversity do.Resource
+		err           error
 	)
 	daoUniversity, err = mysql.GetUniversityResourceByName(name)
 	if err != nil {
 		zap.L().Error("mysql.GetUniversityResourceByName() failed", zap.Error(err))
-		return model.UniversityResources{}, err
-	}
-	respUniversity = model.UniversityResources{
-		ID:               daoUniversity.ID,
-		ShortName:        daoUniversity.ShortName,
-		Title:            daoUniversity.Title,
-		ResourceName:     daoUniversity.ResourceName,
-		ResourceType:     daoUniversity.ResourceType,
-		ResourceMd5:      daoUniversity.ResourceMd5,
-		ResourceSizeB:    daoUniversity.ResourceSizeB,
-		LastUpdateTime:   daoUniversity.LastUpdateTime,
-		IsVector:         daoUniversity.IsVector,
-		IsBitmap:         daoUniversity.IsBitmap,
-		ResolutionWidth:  daoUniversity.ResolutionWidth,
-		ResolutionHeight: daoUniversity.ResolutionHeight,
-		UsedForEdge:      daoUniversity.UsedForEdge,
-		IsDeleted:        daoUniversity.IsDeleted,
-		BackgroundColor:  daoUniversity.BackgroundColor,
+		return do.Resource{}, err
 	}
 	zap.L().Info("GetUniversityResourceFromName() success", zap.String("name", name))
-	return respUniversity, nil
-}
-
-func (s *ResourceService) InsertUniversity(reqUniversities []model.ReqInsertUniversity) error {
-
-	daoUniversities := make([]settings.Universities, 0, len(reqUniversities))
-	// 检查输入是否为空
-	if len(reqUniversities) == 0 {
-		return nil
-	}
-	for _, reqU := range reqUniversities {
-		newDaoUniversity := settings.Universities{
-			Slug:          reqU.Slug,
-			ShortName:     reqU.ShortName,
-			Title:         reqU.Title,
-			Website:       reqU.Website,
-			FullNameEn:    reqU.FullNameEn,
-			Region:        reqU.Region,
-			Province:      reqU.Province,
-			City:          reqU.City,
-			HasVector:     0,
-			ResourceCount: 0,
-			// 处理可空字段
-			Vis:              reqU.Vis,
-			Story:            reqU.Story,
-			MainVectorFormat: nil,
-			ComputationID:    nil,
-
-			// 处理日期字段
-			// 让数据库自动更新
-		}
-		daoUniversities = append(daoUniversities, newDaoUniversity)
-	}
-
-	if err := mysql.InsertUniversities(daoUniversities); err != nil {
-		zap.L().Error("mysql.InsertUniversities() failed", zap.Error(err))
-		return err
-	}
-	zap.L().Info("InsertUniversities() success", zap.Int("success count", len(daoUniversities)))
-	return nil
-}
-
-func (s *ResourceService) GetUserFromName(username string) (model.User, error) {
-	var (
-		user model.User
-		err  error
-	)
-	if user, err = mysql.GetUserFromName(username); err != nil {
-		zap.L().Error("mysql.GetUserFromName() failed", zap.Error(err), zap.String("username", username))
-		return model.User{}, err
-	}
-	return user, err
-}
-
-func (s *ResourceService) InsertUser(resqUser model.User) error {
-	var err error
-	if err = mysql.InsertUser(resqUser); err != nil {
-		zap.L().Error("mysql.InsertUser() failed", zap.Error(err))
-		return err
-	}
-	zap.L().Info("InsertUser() success", zap.String("username", resqUser.Username))
-	return nil
-}
-
-func (s *ResourceService) GetUserList(page, pageSize int, keyword, sortBy, sortOrder string) ([]model.UserListResponse, int64, error) {
-	var (
-		users      []model.UserListResponse
-		totalCount int64
-		err        error
-	)
-	if users, totalCount, err = mysql.GetUserList(page, pageSize, keyword, sortBy, sortOrder); err != nil {
-		zap.L().Error("mysql.GetUserList() failed", zap.Error(err))
-		return nil, 0, err
-	}
-	zap.L().Info("GetUserList success", zap.Int("pageSize", pageSize), zap.Int("page", page),
-		zap.String("keyword", keyword), zap.String("sortBy", sortBy), zap.String("sortOrder", sortOrder))
-	return users, totalCount, nil
-}
-
-// StoreUserToken 是 Service 层的方法，用于将用户的当前有效 Token 存储到 Redis
-// 实现了单点登录的业务逻辑。
-// 它调用了 redis DAO 层中的 SetUserSessionToken 函数。
-func (svc *ResourceService) StoreUserToken(ctx context.Context, userID int, token string, duration time.Duration) error {
-	// 直接调用 DAO 层的封装函数
-	return redis.SetUserSessionToken(ctx, userID, token, duration)
+	return daoUniversity, nil
 }
 
 // GetUserSessionToken (Service 层实现)
-func (svc *ResourceService) GetUserSessionToken(ctx context.Context, userID int) (string, error) {
+func GetUserSessionToken(ctx context.Context, userID int) (string, error) {
 	token, err := redis.GetUserSessionToken(ctx, userID)
 
 	// 捕获 go-redis 的 key 不存在错误
@@ -416,7 +275,7 @@ func (svc *ResourceService) GetUserSessionToken(ctx context.Context, userID int)
 }
 
 // IsTokenBlacklisted (Service 层实现)
-func (svc *ResourceService) IsTokenBlacklisted(ctx context.Context, tokenString string) (bool, error) {
+func IsTokenBlacklisted(ctx context.Context, tokenString string) (bool, error) {
 	// 调用 DAO 层检查黑名单
 	return redis.IsTokenBlacklisted(ctx, tokenString)
 	// Note: IsTokenBlacklisted 在 DAO 层已经使用了 EXISTS 命令，
@@ -425,7 +284,7 @@ func (svc *ResourceService) IsTokenBlacklisted(ctx context.Context, tokenString 
 }
 
 // UserLogout 处理用户的登出逻辑，包括 SSO 撤销和黑名单操作。
-func (svc *ResourceService) UserLogout(ctx context.Context, userID int, tokenString string, expirationTime time.Time) error {
+func UserLogout(ctx context.Context, userID int, tokenString string, expirationTime time.Time) error {
 
 	// 1. 撤销 SSO Session：从 Redis 中删除该用户的 Session Token
 	err := redis.DeleteUserSessionToken(ctx, userID)
@@ -454,17 +313,11 @@ func (svc *ResourceService) UserLogout(ctx context.Context, userID int, tokenStr
 	return nil
 }
 
-func (svc *ResourceService) GetUniversityList(page, pageSize int, keyword, sortBy, sortOrder string) ([]model.Universities, int64, error) {
-	var (
-		respUniversities []model.Universities
-		totalCount       int64
-		err              error
-	)
-	if respUniversities, totalCount, err = mysql.GetUniversityList(page, pageSize, keyword, sortBy, sortOrder); err != nil {
-		zap.L().Error("mysql.GetUniversityList() failed", zap.Error(err))
-		return nil, 0, err
+func UpdateUniversities(universities []do.University) error {
+	if err := mysql.UpdateUniversities(universities); err != nil {
+		zap.L().Error("mysql.UpdateUniversities() failed", zap.Error(err))
+		return err
 	}
-	zap.L().Info("GetUniversityList success", zap.Int("pageSize", pageSize), zap.Int("page", page),
-		zap.String("keyword", keyword), zap.String("sortBy", sortBy), zap.String("sortOrder", sortOrder))
-	return respUniversities, totalCount, nil
+	zap.L().Info("UpdateUniversities success", zap.Int("count", len(universities)))
+	return nil
 }
