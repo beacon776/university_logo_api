@@ -3,89 +3,54 @@ package handler
 import (
 	"database/sql"
 	"errors"
-	"fmt"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"logo_api/model"
+	"logo_api/model/user/dto"
 	"logo_api/service"
-	"logo_api/settings"
 	"net/http"
-	"path/filepath"
-	"strconv"
 	"strings"
 )
 
-func GetUniversityResource(svc *service.ResourceService) gin.HandlerFunc {
+func GetUniversityResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("name")
-		resource, err := svc.GetUniversityResourceFromName(name)
+		resource, err := service.GetUniversityResourceFromName(name)
 		if err != nil {
 			zap.L().Error("GetUniversityResourceFromName() failed", zap.Error(err))
-			// 资源未找到 (假设 Service 层返回特定错误或 nil)
-			c.JSON(http.StatusNotFound, model.Response{
-				Code:    http.StatusNotFound,
-				Message: "Resource not exist",
-				Data:    nil,
-			})
+			// 资源未找到
+			model.Error(c, http.StatusNotFound)
 			return
 		}
 		// 3. 成功响应
-		response := model.Response{
-			Code:    http.StatusOK, // 200
-			Message: "success",
-			Data:    resource, // 自动序列化
-		}
-
-		// 使用 c.JSON() 自动完成结构体到 JSON 的序列化
-		c.JSON(http.StatusOK, response)
+		model.Success(c, resource)
 	}
 }
 
 func GetLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var (
-			size   int
-			width  int
-			height int
-			err    error
-		)
-
-		fullName := c.Param("fullName")
-		ext := filepath.Ext(fullName)
-		ext = ext[1:] // 输入参数文件类型
-
-		// 解析 query 参数
-		bgColor := c.DefaultQuery("bg", "") // 例如 "#FFFFFF"
-
-		size, err = parseQueryInt(c, "size")
-		if err != nil {
-			respondWithError(c, 400, err.Error(), nil, "parseQueryInt()")
-			return
+		var req dto.ResourceGetLogoReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			zap.L().Error("GetLogoFromNameHandler() ShouldBind failed", zap.Error(err))
+			model.Error(c, http.StatusBadRequest)
 		}
-		width, err = parseQueryInt(c, "width")
-		if err != nil {
-			respondWithError(c, 400, err.Error(), nil, "parseQueryInt()")
-			return
-		}
-		height, err = parseQueryInt(c, "height")
-		if err != nil {
-			respondWithError(c, 400, err.Error(), nil, "parseQueryInt()")
-			return
-		}
-
 		// 加日志看看参数是否解析成功
 		zap.L().Info("Received params",
-			zap.Int("size", size),
-			zap.Int("width", width),
-			zap.Int("height", height),
-			zap.String("bg", bgColor),
+			zap.String("name", req.Name),
+			zap.String("type", req.Type),
+			zap.Int("size", req.Size),
+			zap.Int("width", req.Width),
+			zap.Int("height", req.Height),
+			zap.String("bg", req.BgColor),
 		)
-		data, ext, _, err := svc.GetLogo(fullName, bgColor, size, width, height) // 调用service层中的方法，对参数进行处理，具体的逻辑在 GetLogo 中的方法
+		data, ext, _, err := svc.GetLogo(req) // 调用service层中的方法，对参数进行处理，具体的逻辑在 GetLogo 中的方法
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) { // 没查到
-				respondWithError(c, 404, "resource not found", nil, "GetLogo")
+				zap.L().Error("GetLogoFromNameHandler() err, resource not found ", zap.Error(err))
+				model.Error(c, http.StatusNotFound)
 			} else { // 其他错误
-				respondWithError(c, 500, "internal error", err, "GetLogo")
+				zap.L().Error("GetLogoFromNameHandler() err, internal error", zap.Error(err))
+				model.Error(c, http.StatusInternalServerError)
 			}
 			return
 		}
@@ -96,7 +61,8 @@ func GetLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
 	}
 }
 
-func InsertResourceHandler(svc *service.ResourceService) gin.HandlerFunc {
+/*
+func InsertResourceHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var requestData []settings.UniversityResources
 		if err := c.ShouldBindJSON(&requestData); err != nil {
@@ -108,7 +74,7 @@ func InsertResourceHandler(svc *service.ResourceService) gin.HandlerFunc {
 			})
 			return
 		}
-		err := svc.InsertResource(requestData)
+		err := service.InsertResource(requestData)
 		if err != nil {
 			// 如果服务层插入失败，返回 500 错误
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -125,8 +91,8 @@ func InsertResourceHandler(svc *service.ResourceService) gin.HandlerFunc {
 			"data": requestData, // 返回插入的资源信息
 		})
 	}
-}
-
+}*/
+/*
 func UpdateResourceHandler(svc *service.ResourceService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 
@@ -139,34 +105,7 @@ func DeleteResourceHandler(svc *service.ResourceService) gin.HandlerFunc {
 
 	}
 }
-
-// respondWithError 用户传参失误时，code为400，err为nil; 系统内部错误时，code为500，err为真实err
-func respondWithError(c *gin.Context, code int, msg string, err error, location string) {
-	if err != nil {
-		zap.L().Error(
-			location,
-			zap.String("msg", msg),
-			zap.Error(err))
-	}
-	c.JSON(code, gin.H{
-		"code": code,
-		"msg":  msg,
-	})
-}
-
-// parseQueryInt 解析输入url中的参数
-func parseQueryInt(c *gin.Context, key string) (int, error) {
-	valStr := c.DefaultQuery(key, "")
-	if valStr == "" {
-		return 0, nil
-	}
-	val, err := strconv.Atoi(valStr)
-	if err != nil {
-		zap.L().Error("parseQueryInt() err:", zap.Error(err))
-		return 0, fmt.Errorf("invalid %s: %v", key, err)
-	}
-	return val, nil
-}
+*/
 
 // getContentType 根据需求图片类型，获取响应图片的类型
 func getContentType(ext string) string {

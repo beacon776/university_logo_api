@@ -9,134 +9,91 @@ import (
 	"logo_api/auth"
 	"logo_api/dao/mysql"
 	"logo_api/model"
+	"logo_api/model/user/dto"
+	"logo_api/model/user/vo"
 	"logo_api/service"
-	"net/http"
-	"strconv"
 	"strings"
 	"time"
 )
 
-func GetUserList(svc *service.ResourceService) gin.HandlerFunc {
+func GetUserList() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		pageStr := c.DefaultQuery("page", "1")
-		pageSizeStr := c.DefaultQuery("pageSize", "10")
-		keyword := c.DefaultQuery("keyword", "")
-		sortBy := c.DefaultQuery("sortBy", "id")
-		sortOrder := c.DefaultQuery("sortOrder", "asc")
-
-		// 统一处理空值和默认值(调 apifox 时，即使字段为空，也会传入空字符串，因此需要手动处理空字符串)
-		if pageStr == "" {
-			pageStr = "1"
+		var req dto.UserGetListDTO
+		// 如果 Request Body 不为空，才进行 JSON 绑定
+		if c.Request.ContentLength > 0 {
+			if err := c.ShouldBindJSON(&req); err != nil {
+				zap.L().Error("c.ShouldBind(&userGetListDTO)", zap.Error(err))
+				model.Error(c, model.CodeInvalidParam)
+				return
+			}
 		}
-		if pageSizeStr == "" {
-			pageSizeStr = "10"
+		// 允许空参数的存在
+		zap.L().Info("receive request body", zap.Any("req", req))
+		// 设置默认值
+		if req.Page <= 0 {
+			req.Page = 1
 		}
-		if sortBy == "" {
-			sortBy = "id"
+		if req.PageSize <= 0 {
+			req.PageSize = 10
 		}
-		if sortOrder == "" {
-			sortOrder = "asc"
+		if req.SortBy == "" {
+			req.SortBy = "id"
 		}
-
-		// 将字符串转换为整数 (int)
-		page, err := strconv.Atoi(pageStr)
-		if err != nil {
-			zap.L().Error("strconv.Atoi(pageStr) Error", zap.String("pageStr", pageStr), zap.Error(err), zap.String("keyword", keyword))
-			// 处理错误：如果转换失败，返回 400 错误给客户端
-			c.JSON(400, model.Response{
-				Code:    400,
-				Message: "Invalid page parameter",
-				Data:    nil,
-			})
-			return
+		if req.SortOrder == "" {
+			req.SortOrder = "asc"
 		}
 
-		pageSize, err := strconv.Atoi(pageSizeStr)
-		if err != nil {
-			zap.L().Error("strconv.Atoi(pageSizeStr) Error", zap.String("pageSizeStr", pageSizeStr), zap.Error(err), zap.String("keyword", keyword))
-			// 处理错误：如果转换失败，返回 400 错误给客户端
-			c.JSON(400, model.Response{
-				Code:    400,
-				Message: "Invalid page parameter",
-				Data:    nil,
-			})
-			return
-		}
-
-		// 参数有效性检查（推荐）
+		// 参数有效性检查
 		// 确保 page 和 pageSize 是正数
-		if page <= 0 || pageSize <= 0 {
-			c.JSON(400, model.Response{
-				Code:    400,
-				Message: "Invalid page parameter, page and pageSize must be greater than 0.",
-				Data:    nil,
-			})
+		if req.Page <= 0 || req.PageSize <= 0 {
+			model.Error(c, model.CodeInvalidParam, "Invalid page parameter, page and pageSize must be greater than 0.")
 			return
 		}
 
-		users, totalCount, err := svc.GetUserList(page, pageSize, keyword, sortBy, sortOrder)
+		users, totalCount, err := service.GetUserList(req)
 		// 处理服务层错误
 		if err != nil {
 			// 记录日志，并返回 500（内部错误）或 400（如果确定是客户端输入导致的服务错误）
 			zap.L().Error("svc.GetUserList failed", zap.Error(err),
-				zap.Int("page", page), zap.Int("pageSize", pageSize), zap.String("keyword", keyword))
-			c.JSON(500, model.Response{
-				Code:    500,
-				Message: "Failed to retrieve user list",
-				Data:    nil,
-			})
-			return // 确保错误后退出
+				zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.String("keyword", req.Keyword))
+			model.Error(c, model.CodeServerErr, "Failed to retrieve user list.")
+			return
 		}
-		// 根据 totalCount 进行判断
-		if totalCount == 0 && keyword != "" {
+		// 根据 totalCount 进行判断1
+		if totalCount == 0 && req.Keyword != "" {
 			// 如果 totalCount 为 0 且用户使用了 keyword 进行搜索
-
 			// 保持 200，但修改 Message
 			// 客户端看到 200 状态码知道接口运行正常，但可以根据 Message 提示用户
-			message := fmt.Sprintf("No users found matching keyword '%s'", keyword)
-			zap.L().Info(message, zap.Int("page", page), zap.Int("pageSize", pageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", keyword))
+			message := fmt.Sprintf("No users found matching keyword '%s'", req.Keyword)
+			zap.L().Info(message, zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
 
-			c.JSON(http.StatusOK, model.Response{
-				Code:    http.StatusOK,
-				Message: message,
-				Data: gin.H{
-					"list":       users, // list 为空 []
-					"page":       page,
-					"pageSize":   pageSize,
-					"totalCount": totalCount, // totalCount 为 0
-				},
-			})
+			var userListResp vo.UserListResp
+			userListResp.List = users
+			userListResp.Page = req.Page
+			userListResp.PageSize = req.PageSize
+			userListResp.TotalCount = int(totalCount)
+			model.Success(c, userListResp, message)
 			return
 		}
 
 		// 成功返回响应
-		// 成功的 API 响应通常返回 200 OK，并包含数据。
-		// 为了完整性，一个列表接口通常还需要返回总记录数（Total Count），但这里代码中没有体现，
-		// 我们只返回用户列表。
-		zap.L().Info("success get user list", zap.Int("page", page), zap.Int("pageSize", pageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", keyword))
-		c.JSON(200, model.Response{
-			Code:    200,
-			Message: "Success get user list",
-			Data: gin.H{
-				"list":       users,
-				"page":       page,
-				"pageSize":   pageSize,
-				"totalCount": totalCount,
-			},
-		})
+		zap.L().Info("success get user list", zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
+		var userListResp vo.UserListResp
+		userListResp.List = users
+		userListResp.Page = req.Page
+		userListResp.PageSize = req.PageSize
+		userListResp.TotalCount = int(totalCount)
+		model.Success(c, userListResp)
 	}
 }
 
-func RegisterFunc(svc *service.ResourceService) gin.HandlerFunc {
+func RegisterFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 处理请求参数
-		var req model.ReqUser
+		var req dto.UserRegisterReq
 		if err := c.ShouldBind(&req); err != nil {
 			zap.L().Error("Register() failed, Invalid request body or missing fields.")
-			c.JSON(http.StatusBadRequest, model.Response{
-				Code:    http.StatusBadRequest,
-				Message: "Invalid request body or missing fields.",
-			})
+			model.Error(c, model.CodeInvalidParam)
 			return
 		}
 		// 2. 校验参数
@@ -146,20 +103,14 @@ func RegisterFunc(svc *service.ResourceService) gin.HandlerFunc {
 		// 2.1 校验用户名是否为空（TrimSpace后）
 		if username == "" {
 			zap.L().Error("Register() failed, Username cannot be empty or consist only of spaces.", zap.String("username", username))
-			c.JSON(http.StatusBadRequest, model.Response{
-				Code:    http.StatusBadRequest,
-				Message: "Username cannot be empty or consist only of spaces.",
-			})
+			model.Error(c, model.CodeInvalidParam, "用户名不能为空")
 			return
 		}
 
 		// 2.2 校验密码是否为空（TrimSpace后）
 		if password == "" {
 			zap.L().Error("Register() failed, Password cannot be empty or consist only of spaces.", zap.String("username", username))
-			c.JSON(http.StatusBadRequest, model.Response{
-				Code:    http.StatusBadRequest,
-				Message: "Password cannot be empty or consist only of spaces.",
-			})
+			model.Error(c, model.CodeInvalidParam, "密码不能为空")
 			return
 		}
 
@@ -167,24 +118,20 @@ func RegisterFunc(svc *service.ResourceService) gin.HandlerFunc {
 		const minLength = 6
 		if len(password) < minLength {
 			zap.L().Error("Register() failed, Password must be at least 6 characters.", zap.String("username", username))
-			c.JSON(http.StatusBadRequest, model.Response{
-				Code:    http.StatusBadRequest,
-				Message: fmt.Sprintf("Password must be at least %d characters long.", minLength),
-			})
+			model.Error(c, model.CodeInvalidParam, "密码长度应不短为6")
 			return
 		}
 
 		// 3. 检查用户是否存在
-		_, err := svc.GetUserFromName(username)
+		_, err := service.GetUserFromName(username)
 		if err == nil {
 			// 用户已存在，返回 409 Conflict
-			c.JSON(http.StatusConflict, model.Response{
-				Code:    http.StatusConflict,
-				Message: "Username already exists.",
-			})
+			zap.L().Error("Register() failed, Username already exists.", zap.String("username", username))
+			model.Error(c, model.CodeUserExist)
 			return
 
 		}
+
 		// 4. 匹配 "用户不存在" 错误（流程应该继续）
 		// 需要导入 mysql 包
 		if errors.Is(err, mysql.ErrUserNotFound) {
@@ -193,10 +140,7 @@ func RegisterFunc(svc *service.ResourceService) gin.HandlerFunc {
 		} else {
 			// 匹配到其他数据库错误 (非 nil, 非 ErrUserNotFound)
 			zap.L().Error("get user error", zap.String("username", username), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Server database error.",
-			})
+			model.Error(c, model.CodeServerErr, "数据库匹配发生错误")
 			return
 		}
 
@@ -204,79 +148,58 @@ func RegisterFunc(svc *service.ResourceService) gin.HandlerFunc {
 		hashedPassword, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
 		if hashErr != nil {
 			zap.L().Error("bcrypt hashing failed", zap.Error(hashErr))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Failed to process password.",
-			})
+			model.Error(c, model.CodeServerErr, "哈希加密密码发生错误")
 			return
 		}
+
 		// 6. 插入新用户 (存储哈希后的密码)
-		newUser := model.User{
+		newUser := dto.UserInsertDTO{
 			Status:   model.StatusActive, // 1 启用 0 禁用
 			Username: username,
 			Password: string(hashedPassword), // 存储哈希值
 		}
 
-		if err = svc.InsertUser(newUser); err != nil {
+		if err = service.InsertUser(newUser); err != nil {
 			zap.L().Error("insert user error", zap.String("username", username), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Registration failed due to server error.",
-			})
+			model.Error(c, model.CodeServerErr, "插入用户发生错误")
 			return
 		}
 
-		// 7. 注册成功，返回 201 Created
+		// 7. 注册成功，返回 200
 		zap.L().Info("register success", zap.String("username", username))
-		c.JSON(http.StatusCreated, model.Response{
-			Code:    http.StatusCreated,
-			Message: "User registered successfully.",
-		})
+		model.SuccessEmpty(c)
 	}
 }
 
-func UserLogin(svc *service.ResourceService) gin.HandlerFunc {
+func UserLogin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 请求参数处理
-		var req model.ReqUser
-		if err := c.ShouldBind(&req); err != nil {
+		var userReq dto.UserLoginReq
+		if err := c.ShouldBind(&userReq); err != nil {
 			zap.L().Error("Login() failed, Invalid request body or missing fields.", zap.Error(err))
-			c.JSON(http.StatusBadRequest, model.Response{
-				Code:    http.StatusBadRequest,
-				Message: "Invalid request body or missing fields.",
-			})
+			model.Error(c, model.CodeInvalidParam)
 			return
 		}
 		// 2. 请求参数校验
-		username := strings.TrimSpace(req.Username)
-		password := strings.TrimSpace(req.Password)
+		username := strings.TrimSpace(userReq.Username)
+		password := strings.TrimSpace(userReq.Password)
 		if username == "" || password == "" {
 			zap.L().Error("Login() failed, Invalid username or password format.")
-			c.JSON(http.StatusBadRequest, model.Response{
-				Code:    http.StatusBadRequest,
-				Message: "Username and password cannot be empty.",
-			})
+			model.Error(c, model.CodeInvalidParam, "用户名或密码不能为空")
 			return
 		}
 
 		// 3. 查询用户是否存在
-		user, err := svc.GetUserFromName(username)
+		user, err := mysql.GetUserFromName(username)
 		if err != nil {
 			if errors.Is(err, mysql.ErrUserNotFound) {
-				// 用户不存在。为了安全，避免泄露“用户不存在”的信息，统一返回“用户名或密码错误”。
 				zap.L().Warn("Login failed: User not found", zap.String("username", username))
-				c.JSON(http.StatusUnauthorized, model.Response{
-					Code:    http.StatusUnauthorized, // 401 Unauthorized
-					Message: "Invalid username or password.",
-				})
+				model.Error(c, model.CodeUnauthorized, "用户不存在")
 				return
 			}
 			// 数据库查询错误
 			zap.L().Error("Login failed: database error", zap.String("username", username), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Server database error during login.",
-			})
+			model.Error(c, model.CodeServerErr, "数据库查询错误")
 			return
 		}
 
@@ -286,18 +209,12 @@ func UserLogin(svc *service.ResourceService) gin.HandlerFunc {
 		if err != nil {
 			if err == bcrypt.ErrMismatchedHashAndPassword {
 				zap.L().Warn("Login failed: Password mismatch", zap.String("username", username))
-				c.JSON(http.StatusUnauthorized, model.Response{
-					Code:    http.StatusUnauthorized,
-					Message: "Invalid username or password.",
-				})
+				model.Error(c, model.CodeUnauthorized, "用户名或密码错误")
 				return
 			}
 			// 其他 bcrypt 错误
 			zap.L().Error("Login failed: bcrypt error", zap.String("username", username), zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError, // 500
-				Message: "Failed to verify password.",
-			})
+			model.Error(c, model.CodeServerErr, "bcrypt error")
 			return
 		}
 
@@ -306,10 +223,7 @@ func UserLogin(svc *service.ResourceService) gin.HandlerFunc {
 
 		if tokenErr != nil {
 			zap.L().Error("Login failed: Failed to generate JWT token.", zap.Error(tokenErr))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Login successful but failed to generate authentication token.",
-			})
+			model.Error(c, model.CodeServerErr, "登录后尝试生成 token 失败")
 			return
 		}
 		// 关键新增步骤：将新生成的 Token 存储到 Redis
@@ -318,32 +232,30 @@ func UserLogin(svc *service.ResourceService) gin.HandlerFunc {
 		duration := time.Until(expirationTime)
 
 		if duration > 0 {
-			err = svc.StoreUserToken(c.Request.Context(), user.ID, token, duration)
+			err = service.StoreUserToken(c.Request.Context(), user.ID, token, duration)
 			if err != nil {
+				// 存储 token 失败
 				zap.L().Error("UserLogin failed to store token in Redis", zap.Int("userID", user.ID), zap.Error(err))
-				// 即使存储失败，仍应返回 Token，但建议返回服务器内部错误
-				// c.JSON(http.StatusInternalServerError, ... )
-				// return
+				model.Error(c, model.CodeServerErr, "存储 token 失败")
+				return
 			}
 		}
 
 		// 6. 返回成功响应，包含 token
 		zap.L().Info("Login success", zap.String("username", username))
-		c.JSON(http.StatusOK, model.Response{
-			Code:    http.StatusOK,
-			Message: "Login successful.",
-			Data: gin.H{
-				"username": username,
-				"id":       user.ID,
-				"token":    token,
-			},
-		})
+		var userResp vo.UserLoginResp
+		userResp.Token = token
+		userResp.Username = username
+		userResp.ID = user.ID
+		userResp.Status = user.Status
+
+		model.Success(c, userResp)
 	}
 }
 
 // UserLogout 是处理 POST /user/logout 请求的 Handler
 // 它依赖 AuthRequired 中间件在 Context 中注入的用户信息。
-func UserLogout(svc *service.ResourceService) gin.HandlerFunc {
+func UserLogout() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 从 Context 中安全获取中间件设置的参数
 		// AuthRequired 中间件保证了这些值存在且有效
@@ -353,7 +265,7 @@ func UserLogout(svc *service.ResourceService) gin.HandlerFunc {
 		if !ok {
 			// 理论上AuthRequired已保证存在，这里作为安全检查
 			zap.L().Error("UserLogout failed: user_id not found in context")
-			c.JSON(http.StatusUnauthorized, model.Response{Code: http.StatusUnauthorized, Message: "Unauthorized: Missing user session data."})
+			model.Error(c, model.CodeServerErr, "Unauthorized: Missing user session data.")
 			return
 		}
 		userID := userIDValue.(int)
@@ -362,7 +274,7 @@ func UserLogout(svc *service.ResourceService) gin.HandlerFunc {
 		tokenStringValue, ok := c.Get("tokenString")
 		if !ok {
 			zap.L().Error("UserLogout failed: tokenString not found in context")
-			c.JSON(http.StatusUnauthorized, model.Response{Code: http.StatusUnauthorized, Message: "Unauthorized: Missing token string."})
+			model.Error(c, model.CodeServerErr, "Unauthorized: Missing token string.")
 			return
 		}
 		tokenString := tokenStringValue.(string)
@@ -372,7 +284,7 @@ func UserLogout(svc *service.ResourceService) gin.HandlerFunc {
 		claims, ok := userClaimsValue.(*auth.UserClaims)
 		if !ok || claims.ExpiresAt == nil {
 			zap.L().Error("UserLogout failed: invalid or missing user claims in context")
-			c.JSON(http.StatusUnauthorized, model.Response{Code: http.StatusUnauthorized, Message: "Unauthorized: Invalid claims."})
+			model.Error(c, model.CodeServerErr, "Unauthorized: Invalid JWT claims.")
 			return
 		}
 
@@ -380,25 +292,19 @@ func UserLogout(svc *service.ResourceService) gin.HandlerFunc {
 		expirationTime := claims.ExpiresAt.Time
 
 		// 3. 调用 Service 层执行登出逻辑 (清除 SSO Session 和加入黑名单)
-		err := svc.UserLogout(c.Request.Context(), userID, tokenString, expirationTime)
+		err := service.UserLogout(c.Request.Context(), userID, tokenString, expirationTime)
 
 		if err != nil {
 			// 如果 Service 层返回了非 nil 错误，可能是严重的 Redis 或服务器错误
 			zap.L().Error("UserLogout failed due to service error",
 				zap.Int("userID", userID),
 				zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Logout failed due to server error.",
-			})
+			model.Error(c, model.CodeServerErr, "Logout failed due to server error.")
 			return
 		}
 
 		// 4. 登出成功
 		zap.L().Info("UserLogout successful", zap.Int("userID", userID))
-		c.JSON(http.StatusOK, model.Response{
-			Code:    200,
-			Message: "Logout successful.",
-		})
+		model.SuccessEmpty(c)
 	}
 }

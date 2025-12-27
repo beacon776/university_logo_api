@@ -4,7 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"go.uber.org/zap"
-	"logo_api/model"
+	"logo_api/model/user/dto"
 	"strings"
 
 	// 确保 GORM 相关的导入可用
@@ -14,20 +14,20 @@ import (
 // 假设 db 已经是 *gorm.DB 类型，并已在 Init 中初始化
 
 // GetUserFromName 使用 GORM 查询单个用户
-func GetUserFromName(username string) (model.User, error) {
-	var result model.User
+func GetUserFromName(username string) (dto.UserInfoDTO, error) {
+	var result dto.UserInfoDTO
 
 	// 使用 db.Where() 设置查询条件，然后用 First() 查找第一条记录
 	// GORM 会自动将结果映射到 result
-	err := db.Where("username = ? and status = ?", username, 1).First(&result).Error
+	err := db.Table("user").Where("username = ? and status = ?", username, 1).First(&result).Error
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 如果找不到记录，返回一个明确的空结构体和 nil 错误，或者返回 gorm.ErrRecordNotFound
-			return model.User{}, ErrUserNotFound
+			// 如果找不到记录，返回一个明确的空结构体和 gorm.ErrRecordNotFound
+			return dto.UserInfoDTO{}, ErrUserNotFound
 		}
 		zap.L().Error("GetUserFromName() failed", zap.Error(err))
-		return model.User{}, err
+		return dto.UserInfoDTO{}, err
 	}
 
 	zap.L().Info("GetUserFromName() success", zap.String("username", username))
@@ -35,9 +35,9 @@ func GetUserFromName(username string) (model.User, error) {
 }
 
 // InsertUser 使用 GORM 插入用户
-func InsertUser(user model.User) (err error) {
+func InsertUser(user dto.UserInsertDTO) (err error) {
 	// 使用 db.Create() 插入数据。GORM 会自动使用结构体的字段名和值来构建 INSERT 语句。
-	err = db.Create(&user).Error
+	err = db.Table("user").Create(&user).Error
 
 	if err != nil {
 		zap.L().Error("InsertUser() failed", zap.Error(err))
@@ -50,9 +50,14 @@ func InsertUser(user model.User) (err error) {
 }
 
 // GetUserList 使用 GORM 实现动态查询和分页
-func GetUserList(page, pageSize int, keyword, sortBy, sortOrder string) (users []model.UserListResponse, totalCount int64, err error) {
+func GetUserList(req dto.UserGetListDTO) (users []dto.UserInfoDTO, totalCount int64, err error) {
+	page := req.Page
+	pageSize := req.PageSize
+	keyword := req.Keyword
+	sortBy := req.SortBy
+	sortOrder := req.SortOrder
 	// 1. 初始化 GORM 查询构建器
-	tx := db.Model(&model.User{})
+	tx := db.Table("user").Model(&dto.UserInfoDTO{})
 	// 排除敏感字段 password，手动选择 id，username，status
 	tx = tx.Select("id", "username", "status")
 	// 保证只查询 status = 1 的用户
@@ -125,7 +130,7 @@ func GetUserList(page, pageSize int, keyword, sortBy, sortOrder string) (users [
 	// 5. 执行查询
 	// Find 方法执行查询，并将结果映射到 users 切片
 	// 此时，users 切片中的每个 model.User 实例的 Password 字段将是零值（空字符串）
-	var userResponses []model.UserListResponse
+	var userResponses []dto.UserInfoDTO
 	err = tx.Find(&userResponses).Error
 
 	if err != nil {

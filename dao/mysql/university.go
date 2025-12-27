@@ -4,7 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"go.uber.org/zap"
-	"logo_api/model"
+	"logo_api/model/user/do"
+	"logo_api/model/user/dto"
 	"logo_api/settings"
 	// 确保导入 GORM
 	"gorm.io/gorm"
@@ -58,7 +59,7 @@ func GetAllUniversities() ([]settings.Universities, error) {
 
 	// GORM API 要点: 简单查询所有。
 	// 使用 Find() 查询所有记录，GORM 自动映射到切片
-	err := db.Find(&universities).Error
+	err := db.Table("university").Find(&universities).Error
 
 	if err != nil {
 		zap.L().Error("GetAllUniversities() failed", zap.Error(err))
@@ -73,7 +74,7 @@ func GetInitUniversities() ([]settings.InitUniversities, error) {
 
 	// GORM API 要点: 查询并映射到不同结构体。
 	// 使用 Find() 查询所有记录并映射到目标结构体
-	err := db.Find(&universities).Error
+	err := db.Table("university").Find(&universities).Error
 
 	if err != nil {
 		zap.L().Error("GetInitUniversities() failed", zap.Error(err))
@@ -83,20 +84,21 @@ func GetInitUniversities() ([]settings.InitUniversities, error) {
 	return universities, nil
 }
 
-func GetUniversityByName(name string) (settings.Universities, error) {
-	var university settings.Universities
+func GetUniversityByName(name string) (do.University, error) {
+	var university do.University
 	// GORM API 要点: WHERE 条件查询单条记录。
-	// 只查询 is_deleted = 0 的记录(未删除)
+	/*
+		// 只查询 is_deleted = 0 的记录(未删除) 目前没有这个字段 */
 	// 使用 db.Where() 设置条件，并用 First() 获取结果
-	err := db.Where("is_deleted = ?", 0).Where("short_name = ? OR title = ?", name, name).First(&university).Error
+	err := db.Table("university").Where("short_name = ? OR title = ?", name, name).First(&university).Error
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// 找不到记录
-			return settings.Universities{}, errors.New("university not found")
+			return do.University{}, errors.New("university not found")
 		}
 		zap.L().Error("GetUniversityByName() failed", zap.Error(err))
-		return settings.Universities{}, err
+		return do.University{}, err
 	}
 	zap.L().Info("GetUniversityByName() success", zap.String("name", name))
 	return university, nil
@@ -180,7 +182,7 @@ func InsertUniversities(universities []settings.Universities) error {
 
 	// 核心修改：使用 Omit() 排除 CreatedTime 和 UpdatedTime 字段
 	// GORM 的 Omit 方法参数是 Go 结构体中的字段名 (即 CreatedTime, UpdatedTime)
-	if err := db.Omit("CreatedTime", "UpdatedTime").Create(&universities).Error; err != nil {
+	if err := db.Table("university").Omit("CreatedTime", "UpdatedTime").Create(&universities).Error; err != nil {
 		zap.L().Error("db.Create(universities) failed", zap.Error(err))
 		return err
 	}
@@ -196,7 +198,7 @@ func InitInsertUniversities(universities []settings.InitUniversities) error {
 
 	// GORM API 要点: 批量插入（部分字段）。
 	// 对切片使用 db.Create()。由于 settings.InitUniversities 是部分字段，GORM 只插入该结构体中的字段。
-	if err := db.Create(&universities).Error; err != nil {
+	if err := db.Table("university").Create(&universities).Error; err != nil {
 		zap.L().Error("db.Create(universities) failed", zap.Error(err))
 		return err
 	}
@@ -205,13 +207,20 @@ func InitInsertUniversities(universities []settings.InitUniversities) error {
 	return nil
 }
 
-func GetUniversityList(page, pageSize int, keyword, sortBy, sortOrder string) (universities []model.Universities, totalCount int64, err error) {
+func GetUniversityList(req dto.UniversityGetListReq) (universities []do.University, totalCount int64, err error) {
+	page := req.Page
+	pageSize := req.PageSize
+	keyword := req.Keyword
+	sortBy := req.SortBy
+	sortOrder := req.SortOrder
 	// 1. 初始化查询构建器
 	// db.Model(&model.Universities{}) 创建一个基于 Universities 模型的查询事务 (tx)
-	tx := db.Model(&model.Universities{})
+	tx := db.Table("university").Model(&do.University{})
 
-	// 只查询 is_deleted = 0 的记录(未删除)
-	tx = tx.Where("is_deleted = ?", 0)
+	/*
+		// 只查询 is_deleted = 0 的记录
+		目前没有这个字段
+		tx = tx.Where("is_deleted = ?", 0)*/
 
 	// 2. 处理关键字搜索 (Keyword)
 	// 根据图片中 'keyword' 的说明 "模糊查询"
@@ -254,12 +263,12 @@ func GetUniversityList(page, pageSize int, keyword, sortBy, sortOrder string) (u
 }
 
 // UpdateUniversities 根据传入的 model.Universities 数组，更新 universities 表
-func UpdateUniversities(universities []model.Universities) error {
+func UpdateUniversities(universities []do.University) error {
 	if len(universities) == 0 {
 		zap.L().Info("UpdateUniversities() no universities")
 		return nil
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
+	return db.Table("university").Transaction(func(tx *gorm.DB) error {
 		for _, v := range universities {
 			// 1. 检查主键是否存在
 			if v.Slug == "" {
@@ -268,7 +277,7 @@ func UpdateUniversities(universities []model.Universities) error {
 			// 2. 执行更新
 			// 使用 Select("*") 或将结构体转为 map 可以强制更新零值
 			// 这里指定 Model 为 Universities 结构体对应的表
-			result := tx.Model(&model.Universities{}).
+			result := tx.Model(&do.University{}).
 				Omit("CreatedTime", "UpdatedTime").
 				Where("slug = ?", v.Slug).
 				Updates(&v) // 如果 v 中是字段是指针，nil 不更新，非 nil 的零值会更新

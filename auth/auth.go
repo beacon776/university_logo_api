@@ -1,7 +1,6 @@
 package auth
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"github.com/gin-gonic/gin"
@@ -9,7 +8,6 @@ import (
 	"go.uber.org/zap"
 	"logo_api/model"
 	"logo_api/service"
-	"net/http"
 	"time"
 )
 
@@ -133,13 +131,7 @@ func GetTokenExpiration(tokenString string) (time.Time, error) {
 // -------------------------------------------------------------
 
 // AuthRequired 认证中间件 (接受 Service 实例)
-func AuthRequired(svc interface {
-	// GetUserSessionToken 定义中间件需要的 Service 方法接口
-	// 1. 用于查询 SSO Token
-	GetUserSessionToken(ctx context.Context, userID int) (string, error)
-	// IsTokenBlacklisted 用于检查黑名单 (如果采用黑名单模式)
-	IsTokenBlacklisted(ctx context.Context, tokenString string) (bool, error)
-}) gin.HandlerFunc {
+func AuthRequired(svc *service.ResourceService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 从 Header 中获取完整的 Authorization 字符串
 		authHeader := c.GetHeader("Authorization")
@@ -147,10 +139,7 @@ func AuthRequired(svc interface {
 		// 1. 检查 JWT 签名和有效期
 		claims, err := CheckToken(authHeader) // CheckToken 已经完成了签名和有效期检查
 		if err != nil || claims == nil {
-			c.JSON(http.StatusUnauthorized, model.Response{
-				Code:    http.StatusUnauthorized,
-				Message: "Unauthorized: Invalid or expired token. " + err.Error(),
-			})
+			model.Error(c, model.CodeUnauthorized, "Unauthorized: Invalid or expired token. "+err.Error())
 			c.Abort()
 			return
 		}
@@ -162,17 +151,14 @@ func AuthRequired(svc interface {
 		tokenString := authHeader[len("Bearer "):] // 提取裸 Token 字符串
 
 		// 2.1 检查 Token 是否在黑名单中 (用于登出/强制撤销)
-		isBlacklisted, err := svc.IsTokenBlacklisted(c.Request.Context(), tokenString)
+		isBlacklisted, err := service.IsTokenBlacklisted(c.Request.Context(), tokenString)
 		if err != nil {
 			// Redis 查询错误
 			zap.L().Error("AuthRequired: Blacklist check failed",
 				zap.String("token", tokenString),
 				zap.Int("userID", claims.UserID),
 				zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Server error during token verification.",
-			})
+			model.Error(c, model.CodeServerErr, "Server error during token verification.")
 			c.Abort()
 			return
 		}
@@ -180,26 +166,20 @@ func AuthRequired(svc interface {
 			zap.L().Warn("AuthRequired: Token is blacklisted",
 				zap.String("token", tokenString),
 				zap.Int("userID", claims.UserID))
-			c.JSON(http.StatusUnauthorized, model.Response{
-				Code:    http.StatusUnauthorized,
-				Message: "Token has been revoked.",
-			})
+			model.Error(c, model.CodeUnauthorized, "Token has been revoked.")
 			c.Abort()
 			return
 		}
 
 		// 2.2 检查 SSO (单点登录) 状态
 		// 只有当客户端 Token == Redis 中存储的 Token 时，才有效
-		redisToken, err := svc.GetUserSessionToken(c.Request.Context(), claims.UserID)
+		redisToken, err := service.GetUserSessionToken(c.Request.Context(), claims.UserID)
 		if err != nil && !errors.Is(err, service.ErrSessionNotFound) {
 			// 匹配到数据库或 Redis 查询错误 (非 Key 不存在，而是连接或I/O错误)
 			zap.L().Error("AuthRequired: SSO check failed due to server error",
 				zap.Int("userID", claims.UserID),
 				zap.Error(err))
-			c.JSON(http.StatusInternalServerError, model.Response{
-				Code:    http.StatusInternalServerError,
-				Message: "Server error during session check.",
-			})
+			model.Error(c, model.CodeServerErr, "Server error during session check.")
 			c.Abort()
 			return
 		}
@@ -212,10 +192,7 @@ func AuthRequired(svc interface {
 				zap.Int("userID", claims.UserID),
 				zap.String("requestToken", tokenString),
 				zap.String("redisToken", redisToken))
-			c.JSON(http.StatusUnauthorized, model.Response{
-				Code:    http.StatusUnauthorized,
-				Message: "Session expired or overwritten by a new login.",
-			})
+			model.Error(c, model.CodeUnauthorized, "Session expired or overwritten by a new login.")
 			c.Abort()
 			return
 		}
