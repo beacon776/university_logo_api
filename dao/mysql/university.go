@@ -225,9 +225,10 @@ func GetUniversityList(req dto.UniversityGetListReq) (universities []do.Universi
 	// 2. 处理关键字搜索 (Keyword)
 	// 根据图片中 'keyword' 的说明 "模糊查询"
 	if keyword != "" {
+		query := "%" + keyword + "%"
 		// 模糊查询：查找 'title' 字段中包含 keyword 的记录
 		// GORM 的 Where 方法用于构建 WHERE 子句
-		tx = tx.Where("title LIKE ?", "%"+keyword+"%")
+		tx = tx.Where("(title LIKE ?) or (short_name LIKE ?)", query, query)
 	}
 
 	// 3. 统计总记录数 (Total Count)

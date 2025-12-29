@@ -5,7 +5,7 @@ import "time"
 // Resource 代表一个资源，同时用于数据库映射和JSON数据绑定
 type Resource struct {
 	// ID 是 GORM 默认的主键，但为了清晰，我们显式设置 column
-	ID            int    `gorm:"primaryKey;column:id" json:"id"`
+	ID            int    `gorm:"primaryKey;column:id;autoIncrement" json:"id"`
 	Title         string `gorm:"column:title" json:"title" binding:"required"`
 	ShortName     string `gorm:"column:short_name" json:"short_name" binding:"required"`
 	ResourceName  string `gorm:"column:resource_name" json:"resource_name" binding:"required"`

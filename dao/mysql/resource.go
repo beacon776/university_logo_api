@@ -3,6 +3,7 @@ package mysql
 import (
 	"errors"
 	"go.uber.org/zap"
+	"logo_api/model"
 	"logo_api/model/user/do"
 	"logo_api/settings"
 
@@ -145,7 +146,7 @@ func GetAllUniversityResources() ([]settings.UniversityResources, error) {
 	var universityResources []settings.UniversityResources
 
 	// GORM API 要点: 简单查询所有。
-	err := db.Table("resource").Where("is_deleted = ?", 0).Find(&universityResources).Error
+	err := db.Table("resource").Where("is_deleted = ?", model.ResourceIsActive).Find(&universityResources).Error
 
 	if err != nil {
 		zap.L().Error("GetAllUniversityResources() failed", zap.Error(err))
@@ -155,11 +156,11 @@ func GetAllUniversityResources() ([]settings.UniversityResources, error) {
 	return universityResources, nil
 }
 
-func GetUniversityResourceByName(name string) (do.Resource, error) {
+func GetResourceByName(name string) (do.Resource, error) {
 	var result do.Resource
 
 	// GORM API 要点: WHERE 条件查询单条记录。
-	err := db.Table("resource").Where("resource_name = ? and is_deleted = ?", name, 0).First(&result).Error
+	err := db.Table("resource").Where("resource_name = ? and is_deleted = ?", name, model.ResourceIsActive).First(&result).Error
 
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

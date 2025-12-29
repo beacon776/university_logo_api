@@ -36,19 +36,27 @@ func GetUniversityFromName() gin.HandlerFunc {
 
 func InsertUniversity() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var u []dto.UniversityInsertReq
-		if err := c.ShouldBindJSON(&u); err != nil {
+		var req []dto.UniversityInsertReq
+		if err := c.ShouldBindJSON(&req); err != nil {
 			zap.L().Error("InsertUniversity() bind error", zap.Error(err))
 			model.Error(c, model.CodeServerErr)
 			return
 		}
-		if err := service.InsertUniversity(u); err != nil {
+		for _, reqUni := range req {
+			if _, err := service.GetUniversityFromName(reqUni.Title); err == nil { // err == nil 说明找到了该高校，目前已经重复了
+				zap.L().Error("This University Is Exist", zap.String("title", reqUni.Title), zap.Error(err))
+				model.Error(c, model.CodeUniversityExist, "This University Is Exist:"+reqUni.Title)
+				return
+			}
+		}
+
+		if err := service.InsertUniversity(req); err != nil {
 			zap.L().Error("InsertUniversity() insert error", zap.Error(err))
 			model.Error(c, model.CodeServerErr)
 			return
 		}
-		zap.L().Info("InsertUniversity() success", zap.Int("success count", len(u)))
-		model.SuccessEmpty(c, "Successfully inserted "+strconv.Itoa(len(u))+" universities.")
+		zap.L().Info("InsertUniversity() success", zap.Int("success count", len(req)))
+		model.SuccessEmpty(c, "Successfully inserted "+strconv.Itoa(len(req))+" universities.")
 	}
 }
 
@@ -57,7 +65,7 @@ func GetUniversityList() gin.HandlerFunc {
 		var req dto.UniversityGetListReq
 		// 如果 Request Body 不为空，才进行 JSON 绑定
 		if c.Request.ContentLength > 0 {
-			if err := c.ShouldBindJSON(&req); err != nil {
+			if err := c.ShouldBindJSON(&req); err != nil { // 使用结构体tag 检验 SortBy+SortOrder 参数范围合法性
 				zap.L().Error("GetUniversityList() bind error", zap.Error(err))
 				model.Error(c, model.CodeInvalidParam)
 				return
@@ -82,7 +90,7 @@ func GetUniversityList() gin.HandlerFunc {
 		req.Keyword = strings.ReplaceAll(req.Keyword, "(", "（")
 		req.Keyword = strings.ReplaceAll(req.Keyword, ")", "）")
 
-		// 参数有效性检查
+		// page、pageSize 参数范围有效性检查
 		// 确保 page 和 pageSize 是正数
 		if req.Page <= 0 || req.PageSize <= 0 {
 			model.Error(c, model.CodeInvalidParam, "Invalid page parameter, page and pageSize must be greater than 0.")
@@ -105,8 +113,6 @@ func GetUniversityList() gin.HandlerFunc {
 			zap.L().Info(message, zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
 			var resp vo.UniversityListResp
 			resp.List = universities
-			resp.Page = req.Page
-			resp.PageSize = req.PageSize
 			resp.TotalCount = int(totalCount)
 			model.Success(c, resp, message)
 			return
@@ -115,8 +121,6 @@ func GetUniversityList() gin.HandlerFunc {
 		zap.L().Info("Success get university list", zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
 		var resp vo.UniversityListResp
 		resp.List = universities
-		resp.Page = req.Page
-		resp.PageSize = req.PageSize
 		resp.TotalCount = int(totalCount)
 		model.Success(c, resp)
 	}

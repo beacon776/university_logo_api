@@ -15,9 +15,9 @@ import (
 func GetUniversityResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("name")
-		resource, err := service.GetUniversityResourceFromName(name)
+		resource, err := service.GetResourceByName(name)
 		if err != nil {
-			zap.L().Error("GetUniversityResourceFromName() failed", zap.Error(err))
+			zap.L().Error("GetResourceByName() failed", zap.Error(err))
 			// 资源未找到
 			model.Error(c, http.StatusNotFound)
 			return
@@ -36,13 +36,7 @@ func GetLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
 		}
 		// 加日志看看参数是否解析成功
 		zap.L().Info("Received params",
-			zap.String("name", req.Name),
-			zap.String("type", req.Type),
-			zap.Int("size", req.Size),
-			zap.Int("width", req.Width),
-			zap.Int("height", req.Height),
-			zap.String("bg", req.BgColor),
-		)
+			zap.Any("req params", req))
 		data, ext, _, err := svc.GetLogo(req) // 调用service层中的方法，对参数进行处理，具体的逻辑在 GetLogo 中的方法
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) { // 没查到

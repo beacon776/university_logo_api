@@ -16,77 +16,6 @@ import (
 	"time"
 )
 
-func GetUserList() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		var req dto.UserGetListDTO
-		// 如果 Request Body 不为空，才进行 JSON 绑定
-		if c.Request.ContentLength > 0 {
-			if err := c.ShouldBindJSON(&req); err != nil {
-				zap.L().Error("c.ShouldBind(&userGetListDTO)", zap.Error(err))
-				model.Error(c, model.CodeInvalidParam)
-				return
-			}
-		}
-		// 允许空参数的存在
-		zap.L().Info("receive request body", zap.Any("req", req))
-		// 设置默认值
-		if req.Page <= 0 {
-			req.Page = 1
-		}
-		if req.PageSize <= 0 {
-			req.PageSize = 10
-		}
-		if req.SortBy == "" {
-			req.SortBy = "id"
-		}
-		if req.SortOrder == "" {
-			req.SortOrder = "asc"
-		}
-
-		// 参数有效性检查
-		// 确保 page 和 pageSize 是正数
-		if req.Page <= 0 || req.PageSize <= 0 {
-			model.Error(c, model.CodeInvalidParam, "Invalid page parameter, page and pageSize must be greater than 0.")
-			return
-		}
-
-		users, totalCount, err := service.GetUserList(req)
-		// 处理服务层错误
-		if err != nil {
-			// 记录日志，并返回 500（内部错误）或 400（如果确定是客户端输入导致的服务错误）
-			zap.L().Error("svc.GetUserList failed", zap.Error(err),
-				zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.String("keyword", req.Keyword))
-			model.Error(c, model.CodeServerErr, "Failed to retrieve user list.")
-			return
-		}
-		// 根据 totalCount 进行判断1
-		if totalCount == 0 && req.Keyword != "" {
-			// 如果 totalCount 为 0 且用户使用了 keyword 进行搜索
-			// 保持 200，但修改 Message
-			// 客户端看到 200 状态码知道接口运行正常，但可以根据 Message 提示用户
-			message := fmt.Sprintf("No users found matching keyword '%s'", req.Keyword)
-			zap.L().Info(message, zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
-
-			var userListResp vo.UserListResp
-			userListResp.List = users
-			userListResp.Page = req.Page
-			userListResp.PageSize = req.PageSize
-			userListResp.TotalCount = int(totalCount)
-			model.Success(c, userListResp, message)
-			return
-		}
-
-		// 成功返回响应
-		zap.L().Info("success get user list", zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
-		var userListResp vo.UserListResp
-		userListResp.List = users
-		userListResp.Page = req.Page
-		userListResp.PageSize = req.PageSize
-		userListResp.TotalCount = int(totalCount)
-		model.Success(c, userListResp)
-	}
-}
-
 func RegisterFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 处理请求参数
@@ -100,17 +29,26 @@ func RegisterFunc() gin.HandlerFunc {
 		username := strings.TrimSpace(req.Username)
 		password := strings.TrimSpace(req.Password) // 注意：password 必须是明文才能加密
 
-		// 2.1 校验用户名是否为空（TrimSpace后）
+		// 2.1 校验用户名是否合法
 		if username == "" {
 			zap.L().Error("Register() failed, Username cannot be empty or consist only of spaces.", zap.String("username", username))
 			model.Error(c, model.CodeInvalidParam, "用户名不能为空")
 			return
 		}
-
-		// 2.2 校验密码是否为空（TrimSpace后）
+		if username == "null" || username == "nil" {
+			zap.L().Error("Register() failed, Username cannot be null or nil.", zap.String("username", username))
+			model.Error(c, model.CodeInvalidParam, "用户名不能为 null 或 nil")
+			return
+		}
+		// 2.2 校验密码是否合法
 		if password == "" {
 			zap.L().Error("Register() failed, Password cannot be empty or consist only of spaces.", zap.String("username", username))
 			model.Error(c, model.CodeInvalidParam, "密码不能为空")
+			return
+		}
+		if password == "null" || password == "nil" {
+			zap.L().Error("Register() failed, Password cannot be null or nil.", zap.String("username", username))
+			model.Error(c, model.CodeInvalidParam, "密码不能为 null 或 nil")
 			return
 		}
 
@@ -118,7 +56,7 @@ func RegisterFunc() gin.HandlerFunc {
 		const minLength = 6
 		if len(password) < minLength {
 			zap.L().Error("Register() failed, Password must be at least 6 characters.", zap.String("username", username))
-			model.Error(c, model.CodeInvalidParam, "密码长度应不短为6")
+			model.Error(c, model.CodeInvalidParam, "密码长度应不短于6")
 			return
 		}
 
@@ -153,13 +91,13 @@ func RegisterFunc() gin.HandlerFunc {
 		}
 
 		// 6. 插入新用户 (存储哈希后的密码)
-		newUser := dto.UserInsertDTO{
+		newUser := dto.UserInsertReq{
 			Status:   model.StatusActive, // 1 启用 0 禁用
 			Username: username,
 			Password: string(hashedPassword), // 存储哈希值
 		}
-
-		if err = service.InsertUser(newUser); err != nil {
+		var insertId int
+		if insertId, err = service.InsertUser(newUser); err != nil {
 			zap.L().Error("insert user error", zap.String("username", username), zap.Error(err))
 			model.Error(c, model.CodeServerErr, "插入用户发生错误")
 			return
@@ -167,7 +105,9 @@ func RegisterFunc() gin.HandlerFunc {
 
 		// 7. 注册成功，返回 200
 		zap.L().Info("register success", zap.String("username", username))
-		model.SuccessEmpty(c)
+		var voUser vo.UserRegisterResp
+		voUser.ID = insertId
+		model.Success(c, voUser)
 	}
 }
 
@@ -247,7 +187,11 @@ func UserLogin() gin.HandlerFunc {
 		userResp.Token = token
 		userResp.Username = username
 		userResp.ID = user.ID
-		userResp.Status = user.Status
+		if user.Status == model.StatusDeleted {
+			userResp.Status = model.StatusDeletedStr
+		} else if user.Status == model.StatusActive {
+			userResp.Status = model.StatusActiveStr
+		}
 
 		model.Success(c, userResp)
 	}
@@ -306,5 +250,73 @@ func UserLogout() gin.HandlerFunc {
 		// 4. 登出成功
 		zap.L().Info("UserLogout successful", zap.Int("userID", userID))
 		model.SuccessEmpty(c)
+	}
+}
+
+func GetUserList() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req dto.UserGetListReq
+		// 如果 Request Body 不为空，才进行 JSON 绑定
+		if c.Request.ContentLength > 0 {
+			if err := c.ShouldBindJSON(&req); err != nil { // 使用结构体 tag 进行 SortBy 和 SortOrder 范围合法检验
+				zap.L().Error("c.ShouldBind(&userGetListDTO)", zap.Error(err))
+				model.Error(c, model.CodeInvalidParam)
+				return
+			}
+		}
+		// 允许空参数的存在
+		zap.L().Info("receive request body", zap.Any("req", req))
+		// 设置默认值
+		if req.Page <= 0 {
+			req.Page = 1
+		}
+		if req.PageSize <= 0 {
+			req.PageSize = 10
+		}
+		if req.SortBy == "" {
+			req.SortBy = "id"
+		}
+		if req.SortOrder == "" {
+			req.SortOrder = "asc"
+		}
+
+		// page、pageSize 参数范围有效性检查
+		// 确保 page 和 pageSize 是正数
+		if req.Page <= 0 || req.PageSize <= 0 {
+			zap.L().Error("GetUserList() req param doesn't valid", zap.Any("req", req))
+			model.Error(c, model.CodeInvalidParam, "Invalid page parameter, page and pageSize must be greater than 0.")
+			return
+		}
+
+		users, totalCount, err := service.GetUserList(req)
+		// 处理服务层错误
+		if err != nil {
+			// 记录日志，并返回 500（内部错误）或 400（如果确定是客户端输入导致的服务错误）
+			zap.L().Error("svc.GetUserList failed", zap.Error(err),
+				zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.String("keyword", req.Keyword))
+			model.Error(c, model.CodeServerErr, "Failed to retrieve user list.")
+			return
+		}
+		// 根据 totalCount 进行判断1
+		if totalCount == 0 && req.Keyword != "" {
+			// 如果 totalCount 为 0 且用户使用了 keyword 进行搜索
+			// 保持 200，但修改 Message
+			// 客户端看到 200 状态码知道接口运行正常，但可以根据 Message 提示用户
+			message := fmt.Sprintf("No users found matching keyword '%s'", req.Keyword)
+			zap.L().Info(message, zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
+
+			var userListResp vo.UserListResp
+			userListResp.List = users
+			userListResp.TotalCount = int(totalCount)
+			model.Success(c, userListResp, message)
+			return
+		}
+
+		// 成功返回响应
+		zap.L().Info("success get user list", zap.Int("page", req.Page), zap.Int("pageSize", req.PageSize), zap.Int64("totalCount", totalCount), zap.String("keyword", req.Keyword))
+		var userListResp vo.UserListResp
+		userListResp.List = users
+		userListResp.TotalCount = int(totalCount)
+		model.Success(c, userListResp)
 	}
 }

@@ -80,3 +80,12 @@ func InsertUniversity(reqUniversities []dto.UniversityInsertReq) error {
 	zap.L().Info("InsertUniversities() success", zap.Int("success count", len(daoUniversities)))
 	return nil
 }
+
+func UpdateUniversities(universities []do.University) error {
+	if err := mysql.UpdateUniversities(universities); err != nil {
+		zap.L().Error("mysql.UpdateUniversities() failed", zap.Error(err))
+		return err
+	}
+	zap.L().Info("UpdateUniversities success", zap.Int("count", len(universities)))
+	return nil
+}
