@@ -8,3 +8,9 @@ type ResourceGetLogoReq struct {
 	Width   int    `json:"width"`  // logo_width px
 	BgColor string `json:"bg"`     // bg_color
 }
+
+type ResourceGetListReq struct {
+	Name      string `json:"name"` // 模糊匹配 title 或者 short_name
+	SortBy    string `json:"sort_by" binding:"omitempty,oneof=id resourceName resourceSizeB resourceTylastUpdateTime"`
+	SortOrder string `json:"sort_order" binding:"omitempty,oneof=asc desc"`
+}
