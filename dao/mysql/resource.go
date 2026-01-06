@@ -2,10 +2,13 @@ package mysql
 
 import (
 	"errors"
+	"fmt"
 	"go.uber.org/zap"
 	"logo_api/model"
-	"logo_api/model/user/do"
+	"logo_api/model/resource/do"
+	"logo_api/model/resource/dto"
 	"logo_api/settings"
+	"strings"
 
 	"gorm.io/gorm"
 )
@@ -173,4 +176,48 @@ func GetResourceByName(name string) (do.Resource, error) {
 
 	zap.L().Info("GetUniversityResourceByName() success", zap.String("name", name))
 	return result, nil
+}
+
+func GetResourceList(req dto.ResourceGetListReq) ([]do.Resource, error) {
+	var (
+		resourceDoList []do.Resource
+	)
+
+	// 1. 初始化查询实例
+	query := db.Table("resource").Where("is_deleted = ?", model.ResourceIsActive)
+	// 2. 模糊查询（处理通配符）
+	if req.Name != "" {
+		nameParam := "%" + req.Name + "%"
+		query = query.Where("(title LIKE ? OR short_name LIKE ?)", nameParam, nameParam)
+	}
+
+	// 3. 排序处理（防止 SQL 语法错误）
+	if req.SortBy != "" {
+		dbSortByMap := map[string]string{ // 请求体参数映射成db字段（把大驼峰映射成下划线）
+			"id":             "id",
+			"name":           "name",
+			"size":           "size",
+			"type":           "type",
+			"lastUpdateTime": "last_update_time", // 核心转换
+		}
+		dbSortBy := dbSortByMap[req.SortBy] // 把大驼峰映射成下划线
+		sortOrder := "ASC"
+		if strings.ToUpper(req.SortOrder) == "DESC" {
+			sortOrder = "DESC"
+		}
+		query = query.Order(fmt.Sprintf("%s %s", dbSortBy, sortOrder))
+	} else {
+		// 默认排序，防止没有 ORDER BY
+		query = query.Order("id DESC")
+	}
+
+	// 4. 执行查询
+	tx := query.Find(&resourceDoList)
+	if tx.Error != nil {
+		zap.L().Error("GetResourceList() failed", zap.Error(tx.Error))
+		return nil, tx.Error
+	}
+	zap.L().Info("GetResourceList() success", zap.Int("count", len(resourceDoList)))
+
+	return resourceDoList, tx.Error
 }

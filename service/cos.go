@@ -5,7 +5,7 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"logo_api/dao/redis"
-	"logo_api/model/user/dto"
+	"logo_api/model/cos/dto"
 	"net/url"
 	"time"
 )

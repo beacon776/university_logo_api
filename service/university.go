@@ -3,8 +3,8 @@ package service
 import (
 	"go.uber.org/zap"
 	"logo_api/dao/mysql"
-	"logo_api/model/user/do"
-	"logo_api/model/user/dto"
+	"logo_api/model/university/do"
+	"logo_api/model/university/dto"
 	"logo_api/settings"
 )
 

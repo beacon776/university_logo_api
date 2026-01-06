@@ -3,16 +3,19 @@ package handler
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 	"logo_api/model"
-	"logo_api/model/user/dto"
+	"logo_api/model/resource/dto"
+	"logo_api/model/resource/vo"
 	"logo_api/service"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
-func GetUniversityResource() gin.HandlerFunc {
+func GetResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("name")
 		resource, err := service.GetResourceByName(name)
@@ -22,8 +25,37 @@ func GetUniversityResource() gin.HandlerFunc {
 			model.Error(c, http.StatusNotFound)
 			return
 		}
+		var resourceVo vo.ResourceGetResp
+		resourceVo.Resource = resource
+		escapedName := url.PathEscape(name)
+		cosURL := fmt.Sprintf("%s/%s/%s", model.BeaconCosPreURL, resource.ShortName, escapedName)
+		resourceVo.CosURL = cosURL
 		// 3. 成功响应
-		model.Success(c, resource)
+		model.Success(c, resourceVo)
+	}
+}
+
+// GetResourceList 参数 name sortBy sortOrder
+func GetResourceList() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req dto.ResourceGetListReq
+		if err := c.ShouldBindJSON(&req); err != nil {
+			zap.L().Error("GetResourceList() ShouldBindJSON failed", zap.Error(err))
+			model.Error(c, http.StatusBadRequest)
+			return
+		}
+		zap.L().Info("success get req param", zap.Any("req", req))
+		var (
+			resourceList []vo.ResourceListResp
+			err          error
+		)
+		if resourceList, err = service.GetResourceList(req); err != nil {
+			zap.L().Error("GetResourceList() failed", zap.Error(err))
+			model.Error(c, http.StatusInternalServerError)
+			return
+		}
+		zap.L().Info("GetResourceList() success", zap.Int("success count", len(resourceList)))
+		model.Success(c, resourceList)
 	}
 }
 
@@ -33,6 +65,7 @@ func GetLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
 		if err := c.ShouldBindJSON(&req); err != nil {
 			zap.L().Error("GetLogoFromNameHandler() ShouldBind failed", zap.Error(err))
 			model.Error(c, http.StatusBadRequest)
+			return
 		}
 		// 加日志看看参数是否解析成功
 		zap.L().Info("Received params",
@@ -42,11 +75,12 @@ func GetLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
 			if errors.Is(err, sql.ErrNoRows) { // 没查到
 				zap.L().Error("GetLogoFromNameHandler() err, resource not found ", zap.Error(err))
 				model.Error(c, http.StatusNotFound)
+				return
 			} else { // 其他错误
 				zap.L().Error("GetLogoFromNameHandler() err, internal error", zap.Error(err))
 				model.Error(c, http.StatusInternalServerError)
+				return
 			}
-			return
 		}
 
 		contentType := getContentType(ext)

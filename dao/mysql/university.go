@@ -4,8 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"go.uber.org/zap"
-	"logo_api/model/user/do"
-	"logo_api/model/user/dto"
+	do "logo_api/model/university/do"
+	dto "logo_api/model/university/dto"
 	"logo_api/settings"
 	// 确保导入 GORM
 	"gorm.io/gorm"

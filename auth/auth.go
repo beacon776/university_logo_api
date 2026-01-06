@@ -26,6 +26,7 @@ func InitJWTSecret(secret string) error {
 
 	// 检查是否为空字符串
 	if secret == "" {
+		zap.L().Error("InitJWTSecret() failed " + "JWT secret is empty")
 		return errors.New("JWT secret cannot be empty")
 	}
 
@@ -51,7 +52,7 @@ func CreateToken(userID int, username string) (string, error) {
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expirationTime), // 设置过期时间
 			IssuedAt:  jwt.NewNumericDate(time.Now()),     // 设置签发时间
-			Issuer:    "logo-api-server",                  // 签发者
+			Issuer:    "beacon",                           // 签发者
 		},
 	}
 
@@ -61,6 +62,7 @@ func CreateToken(userID int, username string) (string, error) {
 	// 使用密钥签名 Token，并生成最终的字符串
 	tokenString, err := token.SignedString(jwtSecret)
 	if err != nil {
+		zap.L().Error("jwt.SignedString() failed", zap.Error(err))
 		return "", err
 	}
 
@@ -77,6 +79,7 @@ func CheckToken(authHeader string) (*UserClaims, error) {
 	// 检查 Header 是否是 "Bearer <token>" 格式
 	const prefix = "Bearer "
 	if len(authHeader) < len(prefix) || authHeader[:len(prefix)] != prefix {
+		zap.L().Error("CheckToken() failed", zap.Error(fmt.Errorf("invalid auth header")))
 		return nil, errors.New("invalid authorization header format")
 	}
 
@@ -86,6 +89,7 @@ func CheckToken(authHeader string) (*UserClaims, error) {
 	token, err := jwt.ParseWithClaims(tokenString, &UserClaims{}, func(token *jwt.Token) (interface{}, error) {
 		// 确保签名方法是 HMAC
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			zap.L().Error("jwt.ParseWithClaims() failed " + "Unexpected signing method")
 			return nil, errors.New("unexpected signing method")
 		}
 		return jwtSecret, nil // 返回签名密钥
@@ -93,6 +97,7 @@ func CheckToken(authHeader string) (*UserClaims, error) {
 
 	// 任何验证失败，包括过期 (exp claim 检查)，都会导致 err != nil
 	if err != nil {
+		zap.L().Error("jwt.ParseWithClaims() failed", zap.Error(err))
 		// 解析失败，可能是过期、签名错误或格式错误
 		return nil, err
 	}
@@ -114,12 +119,14 @@ func GetTokenExpiration(tokenString string) (time.Time, error) {
 	// 使用密钥解析 Token，只关心 Claims
 	_, _, err := new(jwt.Parser).ParseUnverified(tokenString, claims)
 	if err != nil {
+		zap.L().Error("jwt.Parser.ParseUnverified failed", zap.Error(err))
 		// 如果是解析错误，返回
 		return time.Time{}, err
 	}
 
 	// 检查 claims 是否包含 RegisteredClaims
 	if claims.ExpiresAt == nil {
+		zap.L().Error("jwt.Parser.ParseUnverified failed", zap.Error(err))
 		return time.Time{}, errors.New("token must have an expiration time (exp claim)")
 	}
 
@@ -139,6 +146,7 @@ func AuthRequired(svc *service.ResourceService) gin.HandlerFunc {
 		// 1. 检查 JWT 签名和有效期
 		claims, err := CheckToken(authHeader) // CheckToken 已经完成了签名和有效期检查
 		if err != nil || claims == nil {
+			zap.L().Error("CheckToken() failed", zap.Error(err))
 			model.Error(c, model.CodeUnauthorized, "Unauthorized: Invalid or expired token. "+err.Error())
 			c.Abort()
 			return

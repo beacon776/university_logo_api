@@ -7,10 +7,13 @@ import (
 	"go.uber.org/zap"
 	"logo_api/dao/mysql"
 	"logo_api/dao/redis"
-	"logo_api/model/user/do"
-	"logo_api/model/user/dto"
+	"logo_api/model"
+	"logo_api/model/resource/do"
+	"logo_api/model/resource/dto"
+	"logo_api/model/resource/vo"
 	"logo_api/settings"
 	"logo_api/util"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -87,7 +90,7 @@ func (svc *ResourceService) GetLogo(req dto.ResourceGetLogoReq) ([]byte, string,
 			return nil, ext, "", err
 		}
 		// 4. 转换成功，执行三层缓存写入
-		fullCosPath := fmt.Sprintf("beacon/downloads/%s/%s", info.ShortName, info.ResourceName)
+		fullCosPath := fmt.Sprintf("beacon/downloads/%s/%s", info.ShortName, info.ResourceName) // 这里应该进行 ResourceName 的中文路径转换！
 		cacheKey := generateCacheKey(preName, ext, bgColor, size, width, height)
 		//ttl := time.Hour // 缓存过期时间
 		localTtl := time.Second * 20
@@ -103,7 +106,7 @@ func (svc *ResourceService) GetLogo(req dto.ResourceGetLogoReq) ([]byte, string,
 
 		// 4c. 写入 ZSET: cosPath -> expireTime (定时清理)
 		expireAt := time.Now().Add(localTtl)
-		err = redis.AddPendingDelete(ctx, fmt.Sprintf("beacon/downloads/%s/%s", info.ShortName, info.ResourceName), expireAt)
+		err = redis.AddPendingDelete(ctx, fmt.Sprintf("beacon/downloads/%s/%s", info.ShortName, info.ResourceName), expireAt) // 这里应该进行 ResourceName 的中文路径转换！
 		if err != nil {
 			zap.L().Warn("redis.AddPendingDelete() failed", zap.Error(err))
 		}
@@ -152,4 +155,44 @@ func UpdateResource(resource settings.UniversityResources) error {
 	}
 	zap.L().Info("UpdateUniversityResource() success", zap.Any("resource", resource))
 	return nil
+}
+
+func GetResourceList(req dto.ResourceGetListReq) ([]vo.ResourceListResp, error) {
+	var (
+		doResourceList []do.Resource
+		voResourceList []vo.ResourceListResp
+		err            error
+	)
+	if doResourceList, err = mysql.GetResourceList(req); err != nil {
+		zap.L().Error("mysql.GetResourceList() failed", zap.Error(err))
+		return nil, err
+	}
+	for _, resource := range doResourceList {
+		var voResource vo.ResourceListResp
+		voResource.ID = resource.ID
+		voResource.Title = resource.Title
+		voResource.ShortName = resource.ShortName
+		voResource.Name = resource.Name
+		voResource.Type = resource.Type
+		voResource.Md5 = resource.Md5
+		voResource.Size = resource.Size
+		updateTimeStr := ""
+		if resource.LastUpdateTime != nil {
+			// 格式化为：2026-01-07 00:52:17
+			updateTimeStr = resource.LastUpdateTime.Format("2006-01-02 15:04:05") // RFC3339 转格式(示例："lastUpdateTime": "2025-07-04T08:00:00+08:00")
+			voResource.LastUpdateTime = updateTimeStr
+		}
+		voResource.IsVector = resource.IsVector
+		voResource.IsBitmap = resource.IsBitmap
+		voResource.Width = resource.Width
+		voResource.Height = resource.Height
+		voResource.UsedForEdge = resource.UsedForEdge
+		voResource.IsDeleted = resource.IsDeleted
+		voResource.BackgroundColor = resource.BackgroundColor
+		voResource.CosURL = fmt.Sprintf("%s/%s/%s", model.BeaconCosPreURL, resource.ShortName, url.PathEscape(resource.Name))
+		voResourceList = append(voResourceList, voResource)
+	}
+
+	zap.L().Info("GetResourceList() success", zap.Int("success count", len(voResourceList)))
+	return voResourceList, nil
 }

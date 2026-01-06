@@ -1,6 +1,6 @@
 package vo
 
-import "logo_api/model/user/do"
+import "logo_api/model/university/do"
 
 // UniversityListResp /list 响应
 type UniversityListResp struct {

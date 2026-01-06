@@ -56,3 +56,7 @@ var codeMsg = map[int]string{
 func GetMsg(code int) string {
 	return codeMsg[code]
 }
+
+const (
+	BeaconCosPreURL string = "https://shaly-1353984479.cos.ap-shanghai.myqcloud.com/beacon/downloads"
+)
