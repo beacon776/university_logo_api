@@ -14,3 +14,14 @@ type ResourceGetListReq struct {
 	SortBy    string `json:"sortBy" binding:"omitempty,oneof=id name size type lastUpdateTime"`
 	SortOrder string `json:"sortOrder" binding:"omitempty,oneof=asc desc"`
 }
+
+type ResourceGetReq struct {
+	Name string `json:"name"` // 指定资源名称
+}
+type ResourceDelReq struct {
+	Name string `json:"name"` // 指定资源名称
+}
+
+type ResourceRecoverReq struct {
+	Name string `json:"name"`
+}

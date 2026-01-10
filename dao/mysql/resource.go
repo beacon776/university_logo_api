@@ -221,3 +221,51 @@ func GetResourceList(req dto.ResourceGetListReq) ([]do.Resource, error) {
 
 	return resourceDoList, tx.Error
 }
+
+func GetResources(names []string) ([]do.Resource, error) {
+	if len(names) == 0 {
+		return []do.Resource{}, nil
+	}
+	var (
+		doResources []do.Resource
+	)
+	err := db.Table("resource").
+		Where("is_deleted = ?", model.ResourceIsActive).
+		Where("name IN ?", names).
+		Find(&doResources).Error
+	if err != nil {
+		zap.L().Error("GetResources() failed", zap.Strings("names", names), zap.Error(err))
+		return nil, err
+	}
+	zap.L().Info("GetResources() success", zap.Int("count", len(doResources)))
+	return doResources, nil
+}
+
+func DelResources(names []string) error {
+	if len(names) == 0 {
+		zap.L().Error("DelResources() failed", zap.Strings("names", names))
+		return nil
+	}
+	result := db.Table("resource").Where("name IN ? AND is_deleted = ?", names, model.ResourceIsActive).Updates(map[string]interface{}{"is_deleted": model.ResourceIsDeleted})
+	if result.Error != nil {
+		zap.L().Error("DelResources() failed", zap.Strings("names", names), zap.Error(result.Error))
+		return result.Error
+	}
+	zap.L().Info("DelResources() success", zap.Int64("deleted_count", result.RowsAffected))
+
+	return nil
+}
+
+func RecoverResources(names []string) error {
+	if len(names) == 0 {
+		zap.L().Error("RecoverResources() failed", zap.Strings("names", names))
+		return nil
+	}
+	result := db.Table("resource").Where("name IN ? AND is_deleted = ?", names, model.ResourceIsDeleted).Updates(map[string]interface{}{"is_deleted": model.ResourceIsActive})
+	if result.Error != nil {
+		zap.L().Error("RecoverResources() failed", zap.Strings("names", names), zap.Error(result.Error))
+		return result.Error
+	}
+	zap.L().Info("RecoverResources() success", zap.Int64("deleted_count", result.RowsAffected))
+	return nil
+}

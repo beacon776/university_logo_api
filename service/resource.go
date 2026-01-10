@@ -157,10 +157,10 @@ func UpdateResource(resource settings.UniversityResources) error {
 	return nil
 }
 
-func GetResourceList(req dto.ResourceGetListReq) ([]vo.ResourceListResp, error) {
+func GetResourceList(req dto.ResourceGetListReq) ([]vo.ResourceResp, error) {
 	var (
 		doResourceList []do.Resource
-		voResourceList []vo.ResourceListResp
+		voResourceList []vo.ResourceResp
 		err            error
 	)
 	if doResourceList, err = mysql.GetResourceList(req); err != nil {
@@ -168,31 +168,73 @@ func GetResourceList(req dto.ResourceGetListReq) ([]vo.ResourceListResp, error) 
 		return nil, err
 	}
 	for _, resource := range doResourceList {
-		var voResource vo.ResourceListResp
-		voResource.ID = resource.ID
-		voResource.Title = resource.Title
-		voResource.ShortName = resource.ShortName
-		voResource.Name = resource.Name
-		voResource.Type = resource.Type
-		voResource.Md5 = resource.Md5
-		voResource.Size = resource.Size
-		updateTimeStr := ""
-		if resource.LastUpdateTime != nil {
-			// 格式化为：2026-01-07 00:52:17
-			updateTimeStr = resource.LastUpdateTime.Format("2006-01-02 15:04:05") // RFC3339 转格式(示例："lastUpdateTime": "2025-07-04T08:00:00+08:00")
-			voResource.LastUpdateTime = updateTimeStr
-		}
-		voResource.IsVector = resource.IsVector
-		voResource.IsBitmap = resource.IsBitmap
-		voResource.Width = resource.Width
-		voResource.Height = resource.Height
-		voResource.UsedForEdge = resource.UsedForEdge
-		voResource.IsDeleted = resource.IsDeleted
-		voResource.BackgroundColor = resource.BackgroundColor
-		voResource.CosURL = fmt.Sprintf("%s/%s/%s", model.BeaconCosPreURL, resource.ShortName, url.PathEscape(resource.Name))
+		var voResource vo.ResourceResp
+		voResource = doResourceToVo(resource)
 		voResourceList = append(voResourceList, voResource)
 	}
 
 	zap.L().Info("GetResourceList() success", zap.Int("success count", len(voResourceList)))
 	return voResourceList, nil
+}
+
+func GetResources(names []string) ([]vo.ResourceResp, error) {
+	var (
+		doResources []do.Resource
+		voResources []vo.ResourceResp
+		err         error
+	)
+	if doResources, err = mysql.GetResources(names); err != nil {
+		zap.L().Error("mysql.GerResources() failed", zap.Error(err))
+		return nil, err
+	}
+	for _, resource := range doResources {
+		var voResource vo.ResourceResp
+		voResource = doResourceToVo(resource)
+		voResources = append(voResources, voResource)
+	}
+	return voResources, nil
+}
+
+func DelResources(names []string) error {
+	if err := mysql.DelResources(names); err != nil {
+		zap.L().Error("mysql.DelResources() failed", zap.Strings("names", names), zap.Error(err))
+		return err
+	}
+	zap.L().Info("DelResources() success", zap.Strings("names", names))
+	return nil
+}
+
+func RecoverResources(names []string) error {
+	if err := mysql.RecoverResources(names); err != nil {
+		zap.L().Error("mysql.RecoverResources() failed", zap.Strings("names", names), zap.Error(err))
+		return err
+	}
+	zap.L().Info("RecoverResources() success", zap.Strings("names", names))
+	return nil
+}
+
+func doResourceToVo(resource do.Resource) vo.ResourceResp {
+	var voResource vo.ResourceResp
+	voResource.ID = resource.ID
+	voResource.Title = resource.Title
+	voResource.ShortName = resource.ShortName
+	voResource.Name = resource.Name
+	voResource.Type = resource.Type
+	voResource.Md5 = resource.Md5
+	voResource.Size = resource.Size
+	updateTimeStr := ""
+	if resource.LastUpdateTime != nil {
+		// 格式化为：2026-01-07 00:52:17
+		updateTimeStr = resource.LastUpdateTime.Format("2006-01-02 15:04:05") // RFC3339 转格式(示例："lastUpdateTime": "2025-07-04T08:00:00+08:00")
+		voResource.LastUpdateTime = updateTimeStr
+	}
+	voResource.IsVector = resource.IsVector
+	voResource.IsBitmap = resource.IsBitmap
+	voResource.Width = resource.Width
+	voResource.Height = resource.Height
+	voResource.UsedForEdge = resource.UsedForEdge
+	voResource.IsDeleted = resource.IsDeleted
+	voResource.BackgroundColor = resource.BackgroundColor
+	voResource.CosURL = fmt.Sprintf("%s/%s/%s", model.BeaconCosPreURL, resource.ShortName, url.PathEscape(resource.Name))
+	return voResource
 }

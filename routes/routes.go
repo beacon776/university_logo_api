@@ -45,8 +45,14 @@ func Setup(svc *service.ResourceService) *gin.Engine {
 	resource.Use(auth.AuthRequired(svc))
 	{
 		resource.GET("/getLogo/:fullName", handler.GetLogoFromNameHandler(svc))
-		resource.GET("/:name", handler.GetResource())
+		resource.POST("/get", handler.GetResources())
 		resource.POST("/list", handler.GetResourceList())
+		/*
+			resource.POST("/insert", handler.InsertResource())
+		*/
+
+		resource.POST("/delete", handler.DelResources())
+		resource.POST("/recover", handler.RecoverResources())
 	}
 	return router
 }
