@@ -7,6 +7,7 @@ import (
 	"logo_api/model"
 	"logo_api/model/resource/do"
 	"logo_api/model/resource/dto"
+	do2 "logo_api/model/university/do"
 	"logo_api/settings"
 	"strings"
 
@@ -91,58 +92,78 @@ func QueryFromNameAndBitmapInfo(preName string, ext string, size int, width int,
 	return resource, nil
 }
 
-// InsertUniversityResource 基于结构体数组+db.Create()方法，对 university_resources 表进行批量插入
-func InsertUniversityResource(universityResources []settings.UniversityResources) error {
+// InsertResource 基于结构体数组+db.Create()方法，对 university_resources 表进行批量插入
+func InsertResource(resources []*do.Resource) error {
 	// GORM API 要点: 批量插入。
 	// 对切片使用 db.Create()，GORM 自动处理字段映射和批量 INSERT
-	if len(universityResources) == 0 {
+	if len(resources) == 0 {
 		return nil
 	}
-
-	err := db.Table("resource").Create(&universityResources).Error
-	if err != nil {
-		zap.L().Error("InsertUniversityResource() failed", zap.Error(err))
-		return err
+	// 获取涉及到的 short_name (假设批量插入的是同一个大学或少数几个大学)
+	shortNames := make(map[string]bool)
+	for _, r := range resources {
+		shortNames[r.ShortName] = true
 	}
+	// 开启事务
+	return db.Transaction(func(tx *gorm.DB) error {
+		// 1. 批量插入资源
+		// 必须使用回调函数提供的 tx 对象, 才能实现事务
+		err := tx.Table("resource").Create(resources).Error // resources 已经是结构体指针数组了，Create方法直接传入就行，不用再取一遍指针了
+		if err != nil {
+			zap.L().Error("InsertResource() failed", zap.Error(err))
+			return err
+		}
+		// 2. 针对受影响的大学进行数据聚合更新
+		for shortName := range shortNames {
+			var baseStats struct { // university 表需要首批更新的两个字段
+				Count     int
+				HasVector int
+			}
 
-	zap.L().Info("InsertUniversityResource() success", zap.Int("count", len(universityResources)))
-	return nil
-}
+			// 使用子查询或聚合查询获取该大学的最新状态
+			// 逻辑：统计总数，判断是否存在矢量，获取第一个矢量格式，获取 used_for_edge 的 ID
+			err := tx.Table("resource").
+				Select(`COUNT(*) as count, MAX(is_vector) as has_vector`).
+				Where("short_name = ? AND is_deleted = ?", shortName, model.ResourceIsActive).
+				Scan(&baseStats).Error
+			if err != nil {
+				zap.L().Error("InsertResource() failed", zap.Error(err))
+				return err
+			}
+			// 3. 寻找“主计算文件”：即 used_for_edge = 1 的最新一条记录
+			// 如果不存在，则 computation_id 保持原样或为 NULL
+			var mainRes do.Resource
+			err = tx.Table("resource").
+				Where("short_name = ? AND is_deleted = ? AND used_for_edge = 1", shortName, model.ResourceIsActive).
+				Order("id DESC").
+				Limit(1).
+				Find(&mainRes).Error
+			if err != nil {
+				zap.L().Error("InsertResource() failed", zap.Error(err))
+				return err
+			}
+			// 4. 构建更新 map
+			updateData := map[string]interface{}{
+				"resource_count": baseStats.Count,
+				"has_vector":     baseStats.HasVector,
+			}
+			// 如果找到了对应的边缘计算文件，同步更新 ID 和对应的 Type
+			if mainRes.ID > 0 {
+				updateData["computation_id"] = mainRes.ID
+				updateData["main_vector_format"] = mainRes.Type
+			}
 
-func UpdateUniversityResource(universityResource settings.UniversityResources) error {
-	// GORM API 要点: 保存所有字段。
-	// db.Save() 会根据结构体的主键 (ID) 来执行 UPDATE 或 INSERT/UPDATE (Upsert)。
-	// 它会更新结构体中的所有字段（包括零值），这是最简单的全字段更新方法。
-	err := db.Table("resource").Save(&universityResource).Error
-
-	if err != nil {
-		zap.L().Error("UpdateUniversityResource() failed", zap.Error(err))
-		return err
-	}
-	zap.L().Info("UpdateUniversityResource() success", zap.Int("id", universityResource.ID))
-	return nil
-
-	// 如果只需要更新非零值，可以使用 db.Updates(&universityResource)。
-	// 如果只需要更新特定字段，可以使用 db.Model().Where("id = ?", universityResource.Id).Updates(map[string]interface{})
-}
-
-func DeleteUniversityResource(universityResource settings.UniversityResources) error {
-	// GORM API 要点: 软删除。
-	// 假设您的 model.UniversityResources 结构体中没有 gorm.DeletedAt 字段，我们使用 Updates 实现逻辑删除。
-
-	// db.Model() 指定要操作的对象
-	// db.Where() 指定要更新的记录
-	// db.Update() 更新单个字段
-	err := db.Table("resource").Model(&settings.UniversityResources{}).Where("id = ?", universityResource.ID).Update("is_deleted", 1).Error
-
-	// 如果您的结构体包含 gorm.DeletedAt 字段，则可以使用 db.Delete(&universityResource) 来触发 GORM 的内置软删除。
-
-	if err != nil {
-		zap.L().Error("DeleteUniversityResource() failed", zap.Error(err))
-		return err
-	}
-	zap.L().Info("DeleteUniversityResource() success", zap.Int("id", universityResource.ID))
-	return nil
+			// 执行更新
+			if err := tx.Model(&do2.University{}).
+				Where("short_name = ?", shortName).
+				Updates(updateData).Error; err != nil {
+				zap.L().Error("InsertResource() failed", zap.Error(err))
+				return err
+			}
+		}
+		zap.L().Info("InsertResource and Update University success", zap.Int("count", len(resources)))
+		return nil
+	})
 }
 
 func GetAllUniversityResources() ([]settings.UniversityResources, error) {
@@ -241,6 +262,8 @@ func GetResources(names []string) ([]do.Resource, error) {
 	return doResources, nil
 }
 
+// DelResources
+/*  TODO 删除资源后，应该同步更新 university 表相关数据！！！ */
 func DelResources(names []string) error {
 	if len(names) == 0 {
 		zap.L().Error("DelResources() failed", zap.Strings("names", names))
@@ -256,6 +279,8 @@ func DelResources(names []string) error {
 	return nil
 }
 
+// RecoverResources
+/* TODO 恢复资源后，应该同步更新 university 表相关数据！！！ */
 func RecoverResources(names []string) error {
 	if len(names) == 0 {
 		zap.L().Error("RecoverResources() failed", zap.Strings("names", names))

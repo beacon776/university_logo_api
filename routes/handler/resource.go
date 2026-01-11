@@ -91,37 +91,23 @@ func GetLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
 	}
 }
 
-/*
-func InsertResourceHandler() gin.HandlerFunc {
+func InsertResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var requestData []settings.UniversityResources
-		if err := c.ShouldBindJSON(&requestData); err != nil {
-			// 如果绑定失败，返回 400 错误
-			c.JSON(http.StatusBadRequest, gin.H{
-				"code": 400,
-				"msg":  fmt.Sprintf("Invalid request data: %s", err.Error()),
-				"data": nil,
-			})
+		var req []dto.ResourceInsertReq
+		if err := c.ShouldBind(&req); err != nil {
+			zap.L().Error("InsertResource() ShouldBind failed", zap.Error(err))
+			model.Error(c, http.StatusBadRequest)
 			return
 		}
-		err := service.InsertResource(requestData)
-		if err != nil {
-			// 如果服务层插入失败，返回 500 错误
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"code": 500,
-				"msg":  "insert resource error",
-				"data": err,
-			})
+		if err := service.InsertResource(req); err != nil {
+			zap.L().Error("InsertResource() failed", zap.Error(err))
+			model.Error(c, http.StatusInternalServerError)
 			return
 		}
-		// 插入成功，返回 201 Created
-		c.JSON(http.StatusCreated, gin.H{
-			"code": 201,
-			"msg":  "Insert resource success",
-			"data": requestData, // 返回插入的资源信息
-		})
+		zap.L().Info("success insert", zap.Any("req", req))
+		model.SuccessEmpty(c, "success")
 	}
-}*/
+}
 
 // DelResources 把资源的 is_deleted 字段设置从默认的 0 设置为 1
 func DelResources() gin.HandlerFunc {

@@ -138,22 +138,27 @@ func GetResourceByName(name string) (do.Resource, error) {
 }
 
 // InsertResource 插入资源. 不需要插入Redis缓存，缓存只给转换后的图片使用
-func InsertResource(resource []settings.UniversityResources) error {
-	// 先插 university_resources 表的数据，然后查找
-	if err := mysql.InsertUniversityResource(resource); err != nil {
-		zap.L().Error("mysql.InsertUniversityResource() failed", zap.Error(err))
+func InsertResource(req []dto.ResourceInsertReq) error {
+	var (
+		doResources []*do.Resource
+	)
+	for _, dtoResource := range req {
+		doResource, err := dtoResource.ToEntity()
+		if err != nil {
+			zap.L().Error("dtoResource.ToEntity() failed", zap.Error(err))
+		}
+		doResources = append(doResources, doResource)
+	}
+	if err := mysql.InsertResource(doResources); err != nil {
+		zap.L().Error("mysql.InsertResource() failed", zap.Error(err))
 		return err
 	}
-	zap.L().Info("InsertUniversityResource() success", zap.Any("resource", resource))
-	return nil
-}
+	// 还没写好 腾讯云cos 的上传方法
+	for _, dtoResource := range req {
+		file = dtoResource.File
+		util.Upload(file)
+	}
 
-func UpdateResource(resource settings.UniversityResources) error {
-	if err := mysql.UpdateUniversityResource(resource); err != nil {
-		zap.L().Error("mysql.UpdateUniversityResource() failed", zap.Error(err))
-		return err
-	}
-	zap.L().Info("UpdateUniversityResource() success", zap.Any("resource", resource))
 	return nil
 }
 

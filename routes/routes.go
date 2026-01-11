@@ -47,10 +47,7 @@ func Setup(svc *service.ResourceService) *gin.Engine {
 		resource.GET("/getLogo/:fullName", handler.GetLogoFromNameHandler(svc))
 		resource.POST("/get", handler.GetResources())
 		resource.POST("/list", handler.GetResourceList())
-		/*
-			resource.POST("/insert", handler.InsertResource())
-		*/
-
+		resource.POST("/insert", handler.InsertResource())
 		resource.POST("/delete", handler.DelResources())
 		resource.POST("/recover", handler.RecoverResources())
 	}

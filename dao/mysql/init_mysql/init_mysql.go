@@ -208,7 +208,7 @@ func main() {
 	if len(curUniversityResources) == 0 {
 		zap.L().Info("university_resources 表中尚无数据，可进行初始化查入！")
 		zap.L().Info("开始向 university_resources 表 插入数据。")
-		if err := mysql.InsertUniversityResource(universityResources); err != nil {
+		if err := mysql.InsertResource(universityResources); err != nil {
 			zap.L().Error("university_resources 表批量插入数据失败", zap.Error(err))
 			return
 		}
