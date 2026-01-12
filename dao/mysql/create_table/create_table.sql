@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS resource (
     type VARCHAR(50) NOT NULL COMMENT '资源类型，如svg、png、zip、rar',
     md5 CHAR(32) NOT NULL COMMENT '资源md5校验值',
     size INT NOT NULL COMMENT '资源大小(单位为B)',
-    last_update_time TIMESTAMP NOT NULL COMMENT '资源最后更新时间',
+    last_update_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL COMMENT '资源最后更新时间',
     is_vector TINYINT NOT NULL DEFAULT 0 COMMENT '是否为矢量文件',
     is_bitmap TINYINT NOT NULL DEFAULT 0 COMMENT '是否为位图文件',
     width INT DEFAULT 0 COMMENT '宽度(px)',
