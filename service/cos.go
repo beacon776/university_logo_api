@@ -45,7 +45,7 @@ func (svc *ResourceService) CleanExpiredCOSObjects(ctx context.Context) (*dto.Cl
 
 		// 2. 从腾讯云COS进行删除
 		// 传入 COS DeleteObject 的必须是 DECODED 原始路径
-		err = svc.CosClient.DeleteObject(cosPath)
+		err = svc.CosClient.DeleteObject(context.Background(), cosPath)
 		if err != nil {
 			// COS 删除失败：不从 ZSET 和 Key 2 中移除，等待下一次重试
 			zap.L().Error("Failed to delete COS object", zap.String("path", cosPath), zap.Error(err))
