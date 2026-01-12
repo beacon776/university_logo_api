@@ -138,27 +138,36 @@ func GetResourceByName(name string) (do.Resource, error) {
 }
 
 // InsertResource 插入资源. 不需要插入Redis缓存，缓存只给转换后的图片使用
-func InsertResource(req []dto.ResourceInsertReq) error {
-	var (
-		doResources []*do.Resource
-	)
-	for _, dtoResource := range req {
-		doResource, err := dtoResource.ToEntity()
-		if err != nil {
-			zap.L().Error("dtoResource.ToEntity() failed", zap.Error(err))
-		}
-		doResources = append(doResources, doResource)
-	}
-	if err := mysql.InsertResource(doResources); err != nil {
-		zap.L().Error("mysql.InsertResource() failed", zap.Error(err))
+func InsertResource(ctx context.Context, req dto.ResourceInsertReq) error {
+	// 1. 初始化 COS 客户端
+	cosClient, err := util.NewClient(settings.Config.CosConfig)
+	if err != nil {
+		zap.L().Error("util.NewClient() failed", zap.Error(err))
 		return err
 	}
-	// 还没写好 腾讯云cos 的上传方法
-	for _, dtoResource := range req {
-		file = dtoResource.File
-		util.Upload(file)
+	// 2. 上传对象到 COS
+	uploadCosPath := fmt.Sprintf("beacon/downloads/%s/%s", req.ShortName, req.Name)
+	err = cosClient.UploadObject(ctx, req.File, uploadCosPath)
+	if err != nil {
+		return err
 	}
-
+	// 3. 转换为 Entity
+	doResource, err := req.ToEntity()
+	if err != nil {
+		return err
+	}
+	// 4. 调用 DAO 插入数据 (包含原有的 University 统计更新)
+	doResources := []*do.Resource{doResource}
+	// Service 层回滚逻辑
+	if err = mysql.InsertResource(doResources); err != nil {
+		zap.L().Error("mysql.InsertResource() failed", zap.Error(err))
+		// 删除刚刚上传到 COS 的文件，保持一致性
+		// 使用 Background 确保删除请求不受父级 Context 取消的影响
+		if delErr := cosClient.DeleteObject(context.Background(), uploadCosPath); err != nil {
+			zap.L().Error("cosClient.DeleteObject() failed during rollback", zap.Error(delErr))
+		}
+		return err
+	}
 	return nil
 }
 

@@ -19,7 +19,8 @@ type University struct {
 	MainVectorFormat *string `gorm:"column:main_vector_format" json:"mainVectorFormat"`
 	ResourceCount    int     `gorm:"column:resource_count" json:"resourceCount"`
 	ComputationID    *int    `gorm:"column:computation_id" json:"computationID"`
-
-	CreatedTime *time.Time `gorm:"column:created_time" json:"createdTime"`
-	UpdatedTime *time.Time `gorm:"column:updated_time" json:"updatedTime"`
+	// autoCreateTime 告诉 GORM 在插入时忽略此字段，让数据库生成或由 GORM 生成时间
+	CreatedTime *time.Time `gorm:"column:created_time;autoCreateTime" json:"createdTime"`
+	// autoUpdateTime 告诉 GORM 在创建和更新时都自动处理
+	UpdatedTime *time.Time `gorm:"column:updated_time;autoUpdateTime" json:"updatedTime"`
 }

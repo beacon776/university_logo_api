@@ -9,6 +9,7 @@ import (
 	"logo_api/model/resource/dto"
 	"logo_api/model/resource/vo"
 	"logo_api/service"
+	"logo_api/util"
 	"net/http"
 	"strings"
 )
@@ -93,13 +94,14 @@ func GetLogoFromNameHandler(svc *service.ResourceService) gin.HandlerFunc {
 
 func InsertResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req []dto.ResourceInsertReq
+		var req dto.ResourceInsertReq
 		if err := c.ShouldBind(&req); err != nil {
-			zap.L().Error("InsertResource() ShouldBind failed", zap.Error(err))
+			zap.L().Error("InsertResource() ShouldBind failed", zap.Any("req", req), zap.Error(err))
 			model.Error(c, http.StatusBadRequest)
 			return
 		}
-		if err := service.InsertResource(req); err != nil {
+		req.BackgroundColor = util.NormalizeColor(req.BackgroundColor)
+		if err := service.InsertResource(c.Request.Context(), req); err != nil {
 			zap.L().Error("InsertResource() failed", zap.Error(err))
 			model.Error(c, http.StatusInternalServerError)
 			return

@@ -39,7 +39,7 @@ type ResourceInsertReq struct {
 	ShortName       string                `form:"shortName" binding:"required"`
 	Name            string                `form:"name" binding:"required"`
 	Type            string                `form:"type" binding:"required"`
-	UsedForEdge     int                   `form:"usedForEdge" binding:"required"`
+	UsedForEdge     int                   `form:"usedForEdge" binding:"oneof=0 1"`
 	BackgroundColor string                `form:"backgroundColor" binding:"required"`
 }
 

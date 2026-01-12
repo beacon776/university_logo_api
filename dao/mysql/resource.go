@@ -7,7 +7,6 @@ import (
 	"logo_api/model"
 	"logo_api/model/resource/do"
 	"logo_api/model/resource/dto"
-	do2 "logo_api/model/university/do"
 	"logo_api/settings"
 	"strings"
 
@@ -108,7 +107,7 @@ func InsertResource(resources []*do.Resource) error {
 	return db.Transaction(func(tx *gorm.DB) error {
 		// 1. 批量插入资源
 		// 必须使用回调函数提供的 tx 对象, 才能实现事务
-		err := tx.Table("resource").Create(resources).Error // resources 已经是结构体指针数组了，Create方法直接传入就行，不用再取一遍指针了
+		err := tx.Table("resource").Omit("last_update_time").Create(resources).Error // resources 已经是结构体指针数组了，Create方法直接传入就行，不用再取一遍指针了
 		if err != nil {
 			zap.L().Error("InsertResource() failed", zap.Error(err))
 			return err
@@ -154,7 +153,7 @@ func InsertResource(resources []*do.Resource) error {
 			}
 
 			// 执行更新
-			if err := tx.Model(&do2.University{}).
+			if err := tx.Table("university").
 				Where("short_name = ?", shortName).
 				Updates(updateData).Error; err != nil {
 				zap.L().Error("InsertResource() failed", zap.Error(err))

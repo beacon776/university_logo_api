@@ -15,7 +15,8 @@ type Resource struct {
 
 	// LastUpdateTime 对应数据库的 TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 	// 使用 *time.Time 避免零值覆盖，GORM 会忽略 nil 指针
-	LastUpdateTime *time.Time `gorm:"column:last_update_time" json:"lastUpdateTime"`
+	// autoUpdateTime 告诉 GORM 在创建和更新时都自动处理
+	LastUpdateTime *time.Time `gorm:"column:last_update_time;autoUpdateTime" json:"lastUpdateTime"`
 
 	IsVector        int    `gorm:"column:is_vector" json:"isVector"`
 	IsBitmap        int    `gorm:"column:is_bitmap" json:"isBitmap"`
