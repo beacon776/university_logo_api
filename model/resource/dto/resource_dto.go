@@ -26,11 +26,15 @@ type ResourceGetReq struct {
 	Name string `json:"name"` // 指定资源名称
 }
 type ResourceDelReq struct {
-	Name string `json:"name"` // 指定资源名称
+	Name      string `json:"name"`      // 指定资源名称
+	Title     string `json:"title"`     // 指定资源所属高校中文全称(防止出现多个资源重名的情况)
+	ShortName string `json:"shortName"` // 指定资源所属高校英文简称
 }
 
 type ResourceRecoverReq struct {
-	Name string `json:"name"`
+	Name      string `json:"name"`
+	Title     string `json:"title"`     // 指定资源所属高校中文全称(防止出现多个资源重名的情况)
+	ShortName string `json:"shortName"` // 指定资源所属高校英文简称
 }
 
 type ResourceInsertReq struct {

@@ -96,41 +96,33 @@ func InsertResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req dto.ResourceInsertReq
 		if err := c.ShouldBind(&req); err != nil {
-			zap.L().Error("InsertResource() ShouldBind failed", zap.Any("req", req), zap.Error(err))
+			zap.L().Error("handler.InsertResource() ShouldBind failed", zap.Any("req", req), zap.Error(err))
 			model.Error(c, http.StatusBadRequest)
 			return
 		}
 		req.BackgroundColor = util.NormalizeColor(req.BackgroundColor)
 		if err := service.InsertResource(c.Request.Context(), req); err != nil {
-			zap.L().Error("InsertResource() failed", zap.Error(err))
+			zap.L().Error("service.InsertResource() failed", zap.Any("req", req), zap.Error(err))
 			model.Error(c, http.StatusInternalServerError)
 			return
 		}
-		zap.L().Info("success insert", zap.Any("req", req))
+		zap.L().Info("handler.InsertResource() success", zap.Any("req", req))
 		model.SuccessEmpty(c, "success")
 	}
 }
 
-// DelResources 把资源的 is_deleted 字段设置从默认的 0 设置为 1
-func DelResources() gin.HandlerFunc {
+// DelResource 把资源的 is_deleted 字段设置从默认的 0 设置为 1
+func DelResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req []dto.ResourceDelReq
+		var req dto.ResourceDelReq
 		if err := c.ShouldBindJSON(&req); err != nil {
-			zap.L().Error("DelResource() ShouldBindJSON failed", zap.Error(err))
+			zap.L().Error("handler.DelResource() ShouldBindJSON failed", zap.Error(err))
 			model.Error(c, http.StatusBadRequest)
 			return
 		}
-		var names []string
-		for _, name := range req {
-			names = append(names, name.Name)
-		}
-		if _, err := service.GetResources(names); err != nil {
-			zap.L().Error("DelResource() failed because at least one resource couldn't be found", zap.Strings("names", names), zap.Error(err))
-			model.Error(c, http.StatusInternalServerError)
-			return
-		}
-		if err := service.DelResources(names); err != nil {
-			zap.L().Error("DelResource() failed", zap.Strings("names", names), zap.Error(err))
+
+		if err := service.DelResource(req); err != nil {
+			zap.L().Error("service.DelResource() failed", zap.Any("req", req), zap.Error(err))
 			model.Error(c, http.StatusInternalServerError)
 			return
 		}
@@ -138,20 +130,17 @@ func DelResources() gin.HandlerFunc {
 	}
 }
 
-func RecoverResources() gin.HandlerFunc {
+func RecoverResource() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var req []dto.ResourceRecoverReq
+		var req dto.ResourceRecoverReq
 		if err := c.ShouldBindJSON(&req); err != nil {
-			zap.L().Error("RecoverResources() ShouldBindJSON failed", zap.Error(err))
+			zap.L().Error("handler.RecoverResource() ShouldBindJSON failed", zap.Error(err))
 			model.Error(c, http.StatusBadRequest)
 			return
 		}
-		var names []string
-		for _, name := range req {
-			names = append(names, name.Name)
-		}
-		if err := service.RecoverResources(names); err != nil {
-			zap.L().Error("RecoverResources() failed", zap.Strings("names", names), zap.Error(err))
+
+		if err := service.RecoverResource(req); err != nil {
+			zap.L().Error("service.RecoverResource() failed", zap.Any("req", req), zap.Error(err))
 			model.Error(c, http.StatusInternalServerError)
 			return
 		}

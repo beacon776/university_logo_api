@@ -149,17 +149,19 @@ func InsertResource(ctx context.Context, req dto.ResourceInsertReq) error {
 	uploadCosPath := fmt.Sprintf("beacon/downloads/%s/%s", req.ShortName, req.Name)
 	err = cosClient.UploadObject(ctx, req.File, uploadCosPath)
 	if err != nil {
+		zap.L().Error("cosClient.UploadObject() failed", zap.String("uploadCosPath", uploadCosPath), zap.Error(err))
 		return err
 	}
 	// 3. 转换为 Entity
 	doResource, err := req.ToEntity()
 	if err != nil {
+		zap.L().Error("dto.ResourceInsertReq.ToEntity() failed", zap.Any("req", req), zap.Error(err))
 		return err
 	}
 	// 4. 调用 DAO 插入数据 (包含原有的 University 统计更新)
 	doResources := []*do.Resource{doResource}
 	// Service 层回滚逻辑
-	if err = mysql.InsertResource(doResources); err != nil {
+	if err = mysql.InsertResources(doResources); err != nil {
 		zap.L().Error("mysql.InsertResource() failed", zap.Error(err))
 		// 删除刚刚上传到 COS 的文件，保持一致性
 		// 使用 Background 确保删除请求不受父级 Context 取消的影响
@@ -209,21 +211,31 @@ func GetResources(names []string) ([]vo.ResourceResp, error) {
 	return voResources, nil
 }
 
-func DelResources(names []string) error {
-	if err := mysql.DelResources(names); err != nil {
-		zap.L().Error("mysql.DelResources() failed", zap.Strings("names", names), zap.Error(err))
+// DelResource 删除对应资源（仅在 resource 表中设置 is_deleted = 1，不在腾讯云COS中进行删除）
+func DelResource(req dto.ResourceDelReq) error {
+	if _, err := mysql.GetResourceByStatus(req.Name, req.ShortName, model.ResourceIsActive); err != nil {
+		zap.L().Error("service.DelResource() failed, because could not found this resource", zap.String("name", req.Name), zap.String("title", req.Title), zap.String("shortName", req.ShortName), zap.Error(err))
 		return err
 	}
-	zap.L().Info("DelResources() success", zap.Strings("names", names))
+	if err := mysql.DelResource(req); err != nil {
+		zap.L().Error("service.DelResource() failed", zap.Any("req", req), zap.Error(err))
+		return err
+	}
+	zap.L().Info("service.DelResources() success", zap.Any("req", req))
 	return nil
 }
 
-func RecoverResources(names []string) error {
-	if err := mysql.RecoverResources(names); err != nil {
-		zap.L().Error("mysql.RecoverResources() failed", zap.Strings("names", names), zap.Error(err))
+// RecoverResource 恢复对应资源（仅在 resource 表中设置 is_deleted = 0，资源仍然还在腾讯云COS中）
+func RecoverResource(req dto.ResourceRecoverReq) error {
+	if _, err := mysql.GetResourceByStatus(req.Name, req.ShortName, model.ResourceIsDeleted); err != nil {
+		zap.L().Error("service.RecoverResource() failed, because could not found this resource", zap.String("name", req.Name), zap.String("title", req.Title), zap.String("shortName", req.ShortName), zap.Error(err))
 		return err
 	}
-	zap.L().Info("RecoverResources() success", zap.Strings("names", names))
+	if err := mysql.RecoverResource(req); err != nil {
+		zap.L().Error("mysql.RecoverResource() failed", zap.Any("req", req), zap.Error(err))
+		return err
+	}
+	zap.L().Info("service.RecoverResource() success", zap.Any("req", req))
 	return nil
 }
 

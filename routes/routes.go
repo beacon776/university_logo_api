@@ -48,8 +48,8 @@ func Setup(svc *service.ResourceService) *gin.Engine {
 		resource.POST("/get", handler.GetResources())
 		resource.POST("/list", handler.GetResourceList())
 		resource.POST("/insert", handler.InsertResource())
-		resource.POST("/delete", handler.DelResources())
-		resource.POST("/recover", handler.RecoverResources())
+		resource.POST("/delete", handler.DelResource())
+		resource.POST("/recover", handler.RecoverResource())
 	}
 	return router
 }

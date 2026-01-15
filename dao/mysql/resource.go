@@ -91,76 +91,76 @@ func QueryFromNameAndBitmapInfo(preName string, ext string, size int, width int,
 	return resource, nil
 }
 
-// InsertResource 基于结构体数组+db.Create()方法，对 university_resources 表进行批量插入
-func InsertResource(resources []*do.Resource) error {
+// InsertResources 对 resource 表进行批量插入
+func InsertResources(resources []*do.Resource) error {
 	// GORM API 要点: 批量插入。
 	// 对切片使用 db.Create()，GORM 自动处理字段映射和批量 INSERT
 	if len(resources) == 0 {
+		zap.L().Warn("mysql.InsertResources() Warn: resources is empty")
 		return nil
 	}
-	// 获取涉及到的 short_name (假设批量插入的是同一个大学或少数几个大学)
-	shortNames := make(map[string]bool)
-	for _, r := range resources {
-		shortNames[r.ShortName] = true
+	// 1. 提取所有待插入资源的 MD5 用于初步筛选查询
+	md5s := make([]string, 0, len(resources))
+	for _, resource := range resources {
+		md5s = append(md5s, resource.Md5)
 	}
+
 	// 开启事务
 	return db.Transaction(func(tx *gorm.DB) error {
-		// 1. 批量插入资源
-		// 必须使用回调函数提供的 tx 对象, 才能实现事务
-		err := tx.Table("resource").Omit("last_update_time").Create(resources).Error // resources 已经是结构体指针数组了，Create方法直接传入就行，不用再取一遍指针了
-		if err != nil {
-			zap.L().Error("InsertResource() failed", zap.Error(err))
+		// 2. 查重：从数据库找出 MD5 匹配且未删除的记录
+		var existing []struct {
+			Md5  string
+			Size int
+		}
+		if err := tx.Table("resource").
+			Where("md5 IN ? AND is_deleted = ?", md5s, model.ResourceIsActive).
+			Select("md5, size").
+			Find(&existing).Error; err != nil {
+			zap.L().Error("mysql.tx.Find() err:", zap.Error(err))
 			return err
 		}
-		// 2. 针对受影响的大学进行数据聚合更新
+		// 3. 构建已存在资源的映射表 (Map)，Key 为 "md5_size"
+		existMap := make(map[string]bool)
+		for _, e := range existing {
+			key := fmt.Sprintf("%s_%d", e.Md5, e.Size)
+			existMap[key] = true
+		}
+
+		// 4. 过滤 resources，只保留数据库中不存在的记录
+		var toInsert []*do.Resource
+		shortNames := make(map[string]bool)
+		for _, resource := range resources {
+			key := fmt.Sprintf("%s_%d", resource.Md5, resource.Size)
+			if !existMap[key] {
+				toInsert = append(toInsert, resource)
+				shortNames[resource.ShortName] = true
+			} else {
+				zap.L().Info("mysql.InsertResources() skip duplicate",
+					zap.String("title", resource.Title),
+					zap.String("md5", resource.Md5))
+			}
+		}
+		// 5. 如果过滤后没有新资源，直接退出
+		if len(toInsert) == 0 {
+			zap.L().Info("mysql.InsertResources(): all resources are duplicates, nothing to insert")
+			return nil
+		}
+
+		// 6. 执行批量插入 (使用过滤后的 toInsert)
+		err := tx.Table("resource").Omit("last_update_time").Create(toInsert).Error
+		if err != nil {
+			zap.L().Error("mysql.InsertResources() failed", zap.Error(err))
+			return err
+		}
+
+		// 7. 针对受影响的大学进行数据聚合更新
 		for shortName := range shortNames {
-			var baseStats struct { // university 表需要首批更新的两个字段
-				Count     int
-				HasVector int
-			}
-
-			// 使用子查询或聚合查询获取该大学的最新状态
-			// 逻辑：统计总数，判断是否存在矢量，获取第一个矢量格式，获取 used_for_edge 的 ID
-			err := tx.Table("resource").
-				Select(`COUNT(*) as count, MAX(is_vector) as has_vector`).
-				Where("short_name = ? AND is_deleted = ?", shortName, model.ResourceIsActive).
-				Scan(&baseStats).Error
-			if err != nil {
-				zap.L().Error("InsertResource() failed", zap.Error(err))
-				return err
-			}
-			// 3. 寻找“主计算文件”：即 used_for_edge = 1 的最新一条记录
-			// 如果不存在，则 computation_id 保持原样或为 NULL
-			var mainRes do.Resource
-			err = tx.Table("resource").
-				Where("short_name = ? AND is_deleted = ? AND used_for_edge = 1", shortName, model.ResourceIsActive).
-				Order("id DESC").
-				Limit(1).
-				Find(&mainRes).Error
-			if err != nil {
-				zap.L().Error("InsertResource() failed", zap.Error(err))
-				return err
-			}
-			// 4. 构建更新 map
-			updateData := map[string]interface{}{
-				"resource_count": baseStats.Count,
-				"has_vector":     baseStats.HasVector,
-			}
-			// 如果找到了对应的边缘计算文件，同步更新 ID 和对应的 Type
-			if mainRes.ID > 0 {
-				updateData["computation_id"] = mainRes.ID
-				updateData["main_vector_format"] = mainRes.Type
-			}
-
-			// 执行更新
-			if err := tx.Table("university").
-				Where("short_name = ?", shortName).
-				Updates(updateData).Error; err != nil {
-				zap.L().Error("InsertResource() failed", zap.Error(err))
+			if err = refreshUniversityStats(tx, shortName); err != nil {
+				zap.L().Error("mysql.InsertResources() failed", zap.Error(err))
 				return err
 			}
 		}
-		zap.L().Info("InsertResource and Update University success", zap.Int("count", len(resources)))
+		zap.L().Info("mysql.InsertResources() success", zap.Int("count", len(resources)))
 		return nil
 	})
 }
@@ -261,35 +261,110 @@ func GetResources(names []string) ([]do.Resource, error) {
 	return doResources, nil
 }
 
-// DelResources
-/*  TODO 删除资源后，应该同步更新 university 表相关数据！！！ */
-func DelResources(names []string) error {
-	if len(names) == 0 {
-		zap.L().Error("DelResources() failed", zap.Strings("names", names))
-		return nil
+// GetResourceByStatus 根据 资源全称、所属高校英文简写、是否被删除进行查询
+func GetResourceByStatus(name, shortName string, isDeleted int) (do.Resource, error) {
+	var result do.Resource
+	// 使用 First，找不到记录会报 gorm.ErrRecordNotFound
+	if err := db.Table("resource").
+		Where("name = ? AND short_name = ? AND is_deleted = ?", name, shortName, isDeleted).
+		First(&result).Error; err != nil {
+		zap.L().Error("mysql.GetResourceByStatus() failed", zap.String("name", name), zap.String("shortName", shortName), zap.Int("isDeleted", isDeleted), zap.Error(err))
+		return do.Resource{}, err
 	}
-	result := db.Table("resource").Where("name IN ? AND is_deleted = ?", names, model.ResourceIsActive).Updates(map[string]interface{}{"is_deleted": model.ResourceIsDeleted})
-	if result.Error != nil {
-		zap.L().Error("DelResources() failed", zap.Strings("names", names), zap.Error(result.Error))
-		return result.Error
-	}
-	zap.L().Info("DelResources() success", zap.Int64("deleted_count", result.RowsAffected))
-
-	return nil
+	zap.L().Info("GetResourceByStatus() success", zap.String("name", name), zap.String("shortName", shortName), zap.Int("isDeleted", isDeleted))
+	return result, nil
 }
 
-// RecoverResources
-/* TODO 恢复资源后，应该同步更新 university 表相关数据！！！ */
-func RecoverResources(names []string) error {
-	if len(names) == 0 {
-		zap.L().Error("RecoverResources() failed", zap.Strings("names", names))
+// DelResource 删除列表资源，并同步更新 university 表的数据
+func DelResource(req dto.ResourceDelReq) error {
+	resource, err := GetResourceByStatus(req.Name, req.ShortName, model.ResourceIsActive) // 先通过 资源名称 拿到资源信息
+	if err != nil {
+		zap.L().Error("mysql.GetResourceByNameAndSn() failed", zap.Any("req", req), zap.Error(err))
+		return err
+	}
+	return db.Transaction(func(tx *gorm.DB) error {
+		// 1. 将删除的资源设置为 is_deleted = 1
+		result := tx.Table("resource").Where("id = ?", resource.ID).Updates(map[string]interface{}{"is_deleted": model.ResourceIsDeleted})
+		if result.Error != nil {
+			zap.L().Error("mysql.DelResource() failed", zap.Any("req", req), zap.Error(result.Error))
+			return result.Error
+		}
+		zap.L().Info("mysql.DelResource() 1. Del Resource success", zap.Int64("deleted_count", result.RowsAffected))
+
+		if err = refreshUniversityStats(tx, resource.ShortName); err != nil {
+			zap.L().Error("mysql.refreshUniversityStats() failed", zap.String("short_name", req.ShortName), zap.Error(err))
+			return err
+		}
+		zap.L().Info("mysql.DelResource() 2. refreshUniversityStats() success", zap.Any("req", req))
 		return nil
+	})
+}
+
+// RecoverResource 恢复列表资源，并同步更新 university 表的数据
+func RecoverResource(req dto.ResourceRecoverReq) error {
+	resource, err := GetResourceByStatus(req.Name, req.ShortName, model.ResourceIsDeleted) // 先通过 资源名称 拿到资源信息
+	if err != nil {
+		zap.L().Error("mysql.RecoverResource() failed", zap.Any("req", req), zap.Error(err))
+		return err
 	}
-	result := db.Table("resource").Where("name IN ? AND is_deleted = ?", names, model.ResourceIsDeleted).Updates(map[string]interface{}{"is_deleted": model.ResourceIsActive})
-	if result.Error != nil {
-		zap.L().Error("RecoverResources() failed", zap.Strings("names", names), zap.Error(result.Error))
-		return result.Error
+	// 关键防御：确保查询到的 resource 确实有值
+	if resource.Name == "" {
+		zap.L().Error("mysql.RecoverResource() failed", zap.Any("req", req), zap.Error(fmt.Errorf("resource name is empty for req: %v", req)))
+		return fmt.Errorf("resource name is empty for req: %v", req)
 	}
-	zap.L().Info("RecoverResources() success", zap.Int64("deleted_count", result.RowsAffected))
-	return nil
+	return db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Table("resource").Where("id = ?", resource.ID).Updates(map[string]interface{}{"is_deleted": model.ResourceIsActive})
+		if result.Error != nil {
+			zap.L().Error("mysql.RecoverResource() failed", zap.Any("req", req), zap.Error(result.Error))
+			return result.Error
+		}
+		zap.L().Info("mysql.RecoverResource() 1. Recover Resource success", zap.Int64("deleted_count", result.RowsAffected))
+		if err = refreshUniversityStats(tx, resource.ShortName); err != nil {
+			zap.L().Error("mysql.RecoverResource() failed", zap.String("short_name", req.ShortName), zap.Error(err))
+			return err
+		}
+		zap.L().Info("mysql.RecoverResource() 2. refreshUniversityStats() success", zap.Any("req", req))
+		return nil
+	})
+}
+
+// refreshUniversityStats 更新指定大学的资源统计信息（必须传入事务中的 tx）
+func refreshUniversityStats(tx *gorm.DB, shortName string) error {
+	var baseStats struct { // university 表需要首批更新的两个字段
+		Count     int
+		HasVector int
+	}
+	// 1. 统计有效资源
+	if err := tx.Table("resource").
+		Where("short_name = ? AND is_deleted = ?", shortName, model.ResourceIsActive).
+		Select("COUNT(*) AS count, MAX(is_vector) AS has_vector").
+		Scan(&baseStats).Error; err != nil {
+		zap.L().Error("refreshUniversityStats() failed", zap.String("short_name", shortName), zap.Error(err))
+		return err
+	}
+
+	// 2. 查找最新的主计算文件
+	// 显式初始化 mainRes，确保每次查询都是干净的
+	var mainRes do.Resource
+	if err := tx.Table("resource").
+		Where("short_name = ? AND is_deleted = ? AND used_for_edge = 1", shortName, model.ResourceIsActive).
+		Order("id DESC").Limit(1).Find(&mainRes).Error; err != nil {
+		zap.L().Error("refreshUniversityStats() failed", zap.String("short_name", shortName), zap.Error(err))
+		return err // 捕获可能的数据库查询错误
+	}
+
+	// 3. 构建更新 Map
+	updateData := map[string]interface{}{
+		"resource_count":     baseStats.Count,
+		"has_vector":         baseStats.HasVector,
+		"computation_id":     nil,
+		"main_vector_format": "",
+	}
+	// 只有查到了 ID 才会覆盖 nil
+	if mainRes.ID > 0 {
+		updateData["computation_id"] = mainRes.ID
+		updateData["main_vector_format"] = mainRes.Type
+	}
+	// 对受影响的高校进行更新：
+	return tx.Table("university").Where("short_name = ?", shortName).Updates(updateData).Error
 }
