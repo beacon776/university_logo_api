@@ -39,7 +39,9 @@ CREATE TABLE IF NOT EXISTS resource (
     is_deleted TINYINT NOT NULL DEFAULT 0 COMMENT '该资源是否已经被删除',
     background_color VARCHAR(20) NOT NULL COMMENT '背景颜色，可为十六进制或CSS颜色名',
     FOREIGN KEY (short_name) REFERENCES university(short_name),
-    FOREIGN KEY (title) REFERENCES university(title)
+    FOREIGN KEY (title) REFERENCES university(title),
+    -- 新增联合唯一索引
+    UNIQUE INDEX `idx_md5_size_deleted` (`md5`, `size`, `is_deleted`) COMMENT '防止同一资源重复插入'
 ) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS user (
