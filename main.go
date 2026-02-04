@@ -19,8 +19,7 @@ import (
 	"logo_api/util"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
+	"strings"
 	"time"
 )
 
@@ -68,16 +67,18 @@ func init() {
 	// 8.注册路由
 	r = routes.Setup(svc)
 
-	// 9. 统一监听端口，启动 Gin 服务
-	port := os.Getenv("PORT") // SCF 会自动注入 PORT 环境变量（一般是 9000）
-	if port == "" {
-		port = "9000"
-	}
-	go func() {
-		if err := r.Run(":" + port); err != nil {
-			zap.L().Fatal("server start failed", zap.Error(err))
+	/*
+		// 9. 统一监听端口，启动 Gin 服务
+		port := os.Getenv("PORT") // SCF 会自动注入 PORT 环境变量
+		// 读取本地端口
+		if port == "" {
+			port = fmt.Sprintf("%d", settings.Config.AppSettings.Port)
 		}
-	}()
+		go func() {
+			if err := r.Run(":" + port); err != nil {
+				zap.L().Fatal("server start failed", zap.Error(err))
+			}
+		}()*/
 }
 
 // Handler 是云函数的入口, 它就是个空壳，Web 函数只走 Gin 路由，Handler 只是占位 + Timer 清理
@@ -86,10 +87,16 @@ func Handler(ctx context.Context, evt json.RawMessage) (interface{}, error) {
 }
 
 func main() {
-	runMode := viper.GetString("RUN_MODE") // 新引入的环境变量
+	runMode := strings.ToLower(os.Getenv("RUN_MODE"))
 	// 临时调试代码
 	fmt.Printf("[DEBUG] Detected RUN_MODE: '%s'\n", runMode)
-	// 2. 本地模式
+	port := os.Getenv("PORT") // SCF 会自动注入 PORT 环境变量
+	// 读取本地端口
+	if port == "" {
+		port = fmt.Sprintf("%d", settings.Config.AppSettings.Port)
+	}
+
+	// 本地模式
 	if runMode == "local" {
 		zap.L().Info("starting server")
 		ctx, cancel := context.WithCancel(context.Background())
@@ -97,14 +104,12 @@ func main() {
 		// 定时任务 Goroutine
 		go func() {
 			// 确保服务器已经启动并监听，使用 settings 中的配置或默认值
+			// 等待 2 秒，确保下面的服务器先跑起来
+			time.Sleep(2 * time.Second)
 			host := viper.GetString("app.host") // 假设 host 在 settings 中配置
-			port := viper.GetString("app.port") // 假设 port 在 settings 中配置
 			if host == "" {
 				host = "localhost"
 			}
-			if port == "" {
-				port = "9000"
-			} // 确保使用实际监听的端口
 
 			clearCacheURL := fmt.Sprintf("http://%s:%s/clearCache", host, port)
 			ticker := time.NewTicker(1 * time.Hour) // 调试，每1h删除一次缓存
@@ -125,31 +130,39 @@ func main() {
 				}
 			}
 		}()
-
-		// 优雅关机
-		server := &http.Server{
-			Addr:    fmt.Sprintf("%s:%d", settings.Config.AppSettings.Host, settings.Config.AppSettings.Port),
-			Handler: r,
+		// 2. 启动服务器（阻塞主线程）
+		zap.L().Info("Gin is starting to listen on :" + port)
+		if err := r.Run(":" + port); err != nil {
+			zap.L().Fatal("server start failed", zap.Error(err))
 		}
-		go func() {
-			if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				zap.L().Fatal("listen failed", zap.Error(err))
+
+		/*
+			// 优雅关机
+			server := &http.Server{
+				Addr:    fmt.Sprintf("%s:%d", settings.Config.AppSettings.Host, settings.Config.AppSettings.Port),
+				Handler: r,
 			}
-		}()
-		ch := make(chan os.Signal, 1)
-		signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
-		<-ch
-		zap.L().Info("Shutdown Server ...")
-		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
-			zap.L().Fatal("Server Shutdown", zap.Error(err))
-		}
-		zap.L().Info("Server exiting")
+			go func() {
+				if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+					zap.L().Fatal("listen failed", zap.Error(err))
+				}
+			}()
+			ch := make(chan os.Signal, 1)
+			signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
+			<-ch
+			zap.L().Info("Shutdown Server ...")
+			ctx, cancel = context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := server.Shutdown(ctx); err != nil {
+				zap.L().Fatal("Server Shutdown", zap.Error(err))
+			}
+			zap.L().Info("Server exiting")*/
+		return
+	} else {
+		// 3. 云函数模式：只在非 local 模式下启动
+		zap.L().Info("Running in CLOUD mode")
+		cloudfunction.Start(Handler)
 	}
-	// 3. 云函数模式
-	cloudfunction.Start(Handler)
-
 }
 
 // 辅助函数：发送 HTTP POST 请求到 /clearCache

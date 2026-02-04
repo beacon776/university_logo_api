@@ -26,7 +26,7 @@ func QueryFromNameAndSvg(preName string, ext string) (settings.UniversityResourc
 
 	// GORM API 要点: 复合 WHERE 条件查询单条记录。
 	// 使用 First() 查找，GORM 自动添加 LIMIT 1
-	err := db.Table("resource").Where("(short_name = ? OR title = ?) AND resource_type = ? AND is_deleted = ?", preName, preName, ext, 0).First(&resource).Error
+	err := db.Table("resource").Where("(short_name = ? OR title = ?) AND type = ? AND is_deleted = ?", preName, preName, ext, 0).First(&resource).Error
 
 	// 查询出错
 	if err != nil {
@@ -48,11 +48,11 @@ func QueryFromNameAndBitmapInfo(preName string, ext string, size int, width int,
 
 	// GORM API 要点: 复杂的 WHERE/OR 组合查询
 	// 使用 Where() 包含所有的 AND 条件
-	tx := db.Table("resource").Where("(short_name = ? OR title = ?) AND resource_type = ? AND is_deleted = 0 AND background_color = ? AND is_deleted = ?",
+	tx := db.Table("resource").Where("(short_name = ? OR title = ?) AND type = ? AND is_deleted = 0 AND background_color = ? AND is_deleted = ?",
 		preName, preName, ext, bgColor, 0)
 
 	// 使用 Or() 组合宽度/高度的 OR 逻辑
-	tx = tx.Where("(resolution_width = ? AND resolution_height = ?) OR (resolution_width = ? AND resolution_height = ? AND is_deleted = ?)",
+	tx = tx.Where("(width = ? AND height = ?) OR (width = ? AND height = ? AND is_deleted = ?)",
 		size, size, width, height, 0)
 
 	err := tx.First(&resource).Error // 执行第一次查询
@@ -101,20 +101,23 @@ func InsertResources(resources []*do.Resource) error {
 	}
 	// 1. 提取所有待插入资源的 MD5 用于初步筛选查询
 	md5s := make([]string, 0, len(resources))
+	sns := make([]string, 0, len(resources))
 	for _, resource := range resources {
 		md5s = append(md5s, resource.Md5)
+		sns = append(sns, resource.ShortName)
 	}
 
 	// 开启事务
 	return db.Transaction(func(tx *gorm.DB) error {
-		// 2. 查重：从数据库找出 MD5 匹配且未删除的记录
+		// 2. 查重：从数据库找出 MD5 + short_name 匹配且未删除的记录
 		var existing []struct {
-			Md5  string
-			Size int
+			Md5       string
+			Size      int
+			ShortName string
 		}
 		if err := tx.Table("resource").
-			Where("md5 IN ? AND is_deleted = ?", md5s, model.ResourceIsActive).
-			Select("md5, size").
+			Where("md5 IN ? AND short_name IN ? AND is_deleted = ?", md5s, sns, model.ResourceIsActive).
+			Select("md5, size, short_name").
 			Find(&existing).Error; err != nil {
 			zap.L().Error("mysql.tx.Find() err:", zap.Error(err))
 			return err
@@ -122,7 +125,7 @@ func InsertResources(resources []*do.Resource) error {
 		// 3. 构建已存在资源的映射表 (Map)，Key 为 "md5_size"
 		existMap := make(map[string]bool)
 		for _, e := range existing {
-			key := fmt.Sprintf("%s_%d", e.Md5, e.Size)
+			key := fmt.Sprintf("%s_%s_%d", e.ShortName, e.Md5, e.Size)
 			existMap[key] = true
 		}
 
@@ -130,7 +133,7 @@ func InsertResources(resources []*do.Resource) error {
 		var toInsert []*do.Resource
 		shortNames := make(map[string]bool)
 		for _, resource := range resources {
-			key := fmt.Sprintf("%s_%d", resource.Md5, resource.Size)
+			key := fmt.Sprintf("%s_%s_%d", resource.ShortName, resource.Md5, resource.Size)
 			if !existMap[key] {
 				toInsert = append(toInsert, resource)
 				shortNames[resource.ShortName] = true
@@ -155,7 +158,7 @@ func InsertResources(resources []*do.Resource) error {
 
 		// 7. 针对受影响的大学进行数据聚合更新
 		for shortName := range shortNames {
-			if err = refreshUniversityStats(tx, shortName); err != nil {
+			if err = RefreshUniversityStats(tx, shortName); err != nil {
 				zap.L().Error("mysql.InsertResources() failed", zap.Error(err))
 				return err
 			}
@@ -291,7 +294,7 @@ func DelResource(req dto.ResourceDelReq) error {
 		}
 		zap.L().Info("mysql.DelResource() 1. Del Resource success", zap.Int64("deleted_count", result.RowsAffected))
 
-		if err = refreshUniversityStats(tx, resource.ShortName); err != nil {
+		if err = RefreshUniversityStats(tx, resource.ShortName); err != nil {
 			zap.L().Error("mysql.refreshUniversityStats() failed", zap.String("short_name", req.ShortName), zap.Error(err))
 			return err
 		}
@@ -319,7 +322,7 @@ func RecoverResource(req dto.ResourceRecoverReq) error {
 			return result.Error
 		}
 		zap.L().Info("mysql.RecoverResource() 1. Recover Resource success", zap.Int64("deleted_count", result.RowsAffected))
-		if err = refreshUniversityStats(tx, resource.ShortName); err != nil {
+		if err = RefreshUniversityStats(tx, resource.ShortName); err != nil {
 			zap.L().Error("mysql.RecoverResource() failed", zap.String("short_name", req.ShortName), zap.Error(err))
 			return err
 		}
@@ -328,8 +331,8 @@ func RecoverResource(req dto.ResourceRecoverReq) error {
 	})
 }
 
-// refreshUniversityStats 更新指定大学的资源统计信息（必须传入事务中的 tx）
-func refreshUniversityStats(tx *gorm.DB, shortName string) error {
+// RefreshUniversityStats 更新指定大学的资源统计信息（必须传入事务中的 tx）
+func RefreshUniversityStats(tx *gorm.DB, shortName string) error {
 	var baseStats struct { // university 表需要首批更新的两个字段
 		Count     int
 		HasVector int

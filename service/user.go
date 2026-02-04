@@ -44,7 +44,7 @@ func GetUserList(req dto.UserGetListReq) ([]dto.UserListDTO, int64, error) {
 	return dtoUsers, totalCount, nil
 }
 
-func InsertUser(req dto.UserInsertReq) (int, error) {
+func InsertUser(req dto.UserInsertDTO) (int, error) {
 	var (
 		insertId int
 		err      error

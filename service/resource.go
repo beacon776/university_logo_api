@@ -173,41 +173,46 @@ func InsertResource(ctx context.Context, req dto.ResourceInsertReq) error {
 	return nil
 }
 
-func GetResourceList(req dto.ResourceGetListReq) ([]vo.ResourceResp, error) {
+func GetResourceList(req dto.ResourceGetListReq) (vo.ResourceResp, error) {
 	var (
-		doResourceList []do.Resource
-		voResourceList []vo.ResourceResp
-		err            error
+		doResourceList  []do.Resource
+		dtoResourceList []dto.ResourceInfoDTO
+		voResourceList  vo.ResourceResp
+		err             error
 	)
 	if doResourceList, err = mysql.GetResourceList(req); err != nil {
-		zap.L().Error("mysql.GetResourceList() failed", zap.Error(err))
-		return nil, err
+		zap.L().Error("mysql.GetResourceList() failed", zap.String("name", req.Name), zap.Error(err))
+		return vo.ResourceResp{}, err
 	}
 	for _, resource := range doResourceList {
-		var voResource vo.ResourceResp
-		voResource = doResourceToVo(resource)
-		voResourceList = append(voResourceList, voResource)
+		var dtoResource dto.ResourceInfoDTO
+		dtoResource = doResourceToDTO(resource)
+		dtoResourceList = append(dtoResourceList, dtoResource)
 	}
-
-	zap.L().Info("GetResourceList() success", zap.Int("success count", len(voResourceList)))
+	voResourceList.List = dtoResourceList
+	voResourceList.TotalCount = len(dtoResourceList)
+	zap.L().Info("GetResourceList() success", zap.String("name", req.Name), zap.Int("success count", voResourceList.TotalCount))
 	return voResourceList, nil
 }
 
-func GetResources(names []string) ([]vo.ResourceResp, error) {
+func GetResources(names []string) (vo.ResourceResp, error) {
 	var (
-		doResources []do.Resource
-		voResources []vo.ResourceResp
-		err         error
+		doResources  []do.Resource
+		dtoResources []dto.ResourceInfoDTO
+		voResources  vo.ResourceResp
+		err          error
 	)
 	if doResources, err = mysql.GetResources(names); err != nil {
 		zap.L().Error("mysql.GerResources() failed", zap.Error(err))
-		return nil, err
+		return vo.ResourceResp{}, err
 	}
 	for _, resource := range doResources {
-		var voResource vo.ResourceResp
-		voResource = doResourceToVo(resource)
-		voResources = append(voResources, voResource)
+		var dtoResource dto.ResourceInfoDTO
+		dtoResource = doResourceToDTO(resource)
+		dtoResources = append(dtoResources, dtoResource)
 	}
+	voResources.List = dtoResources
+	voResources.TotalCount = len(dtoResources)
 	return voResources, nil
 }
 
@@ -239,28 +244,28 @@ func RecoverResource(req dto.ResourceRecoverReq) error {
 	return nil
 }
 
-func doResourceToVo(resource do.Resource) vo.ResourceResp {
-	var voResource vo.ResourceResp
-	voResource.ID = resource.ID
-	voResource.Title = resource.Title
-	voResource.ShortName = resource.ShortName
-	voResource.Name = resource.Name
-	voResource.Type = resource.Type
-	voResource.Md5 = resource.Md5
-	voResource.Size = resource.Size
+func doResourceToDTO(resource do.Resource) dto.ResourceInfoDTO {
+	var dtoResource dto.ResourceInfoDTO
+	dtoResource.ID = resource.ID
+	dtoResource.Title = resource.Title
+	dtoResource.ShortName = resource.ShortName
+	dtoResource.Name = resource.Name
+	dtoResource.Type = resource.Type
+	dtoResource.Md5 = resource.Md5
+	dtoResource.Size = resource.Size
 	updateTimeStr := ""
 	if resource.LastUpdateTime != nil {
 		// 格式化为：2026-01-07 00:52:17
 		updateTimeStr = resource.LastUpdateTime.Format("2006-01-02 15:04:05") // RFC3339 转格式(示例："lastUpdateTime": "2025-07-04T08:00:00+08:00")
-		voResource.LastUpdateTime = updateTimeStr
+		dtoResource.LastUpdateTime = updateTimeStr
 	}
-	voResource.IsVector = resource.IsVector
-	voResource.IsBitmap = resource.IsBitmap
-	voResource.Width = resource.Width
-	voResource.Height = resource.Height
-	voResource.UsedForEdge = resource.UsedForEdge
-	voResource.IsDeleted = resource.IsDeleted
-	voResource.BackgroundColor = resource.BackgroundColor
-	voResource.CosURL = fmt.Sprintf("%s/%s/%s", model.BeaconCosPreURL, resource.ShortName, url.PathEscape(resource.Name))
-	return voResource
+	dtoResource.IsVector = resource.IsVector
+	dtoResource.IsBitmap = resource.IsBitmap
+	dtoResource.Width = resource.Width
+	dtoResource.Height = resource.Height
+	dtoResource.UsedForEdge = resource.UsedForEdge
+	dtoResource.IsDeleted = resource.IsDeleted
+	dtoResource.BackgroundColor = resource.BackgroundColor
+	dtoResource.CosURL = fmt.Sprintf("%s/%s/%s", model.BeaconCosPreURL, resource.ShortName, url.PathEscape(resource.Name))
+	return dtoResource
 }

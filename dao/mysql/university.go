@@ -86,18 +86,28 @@ func GetInitUniversities() ([]settings.InitUniversities, error) {
 
 func GetUniversityByName(name string) (do.University, error) {
 	var university do.University
-	// GORM API 要点: WHERE 条件查询单条记录。
-	/*
-		// 只查询 is_deleted = 0 的记录(未删除) 目前没有这个字段 */
-	// 使用 db.Where() 设置条件，并用 First() 获取结果
+	// 先查到高校准确的 shortName
 	err := db.Table("university").Where("short_name = ? OR title = ?", name, name).First(&university).Error
-
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			// 找不到记录
-			return do.University{}, errors.New("university not found")
+			zap.L().Error("GetUniversityByName() failed because university could not found", zap.String("name", name), zap.Error(err))
+			return do.University{}, gorm.ErrRecordNotFound
 		}
-		zap.L().Error("GetUniversityByName() failed", zap.Error(err))
+		zap.L().Error("mysql.GetUniversityByName() failed", zap.String("name", name), zap.Error(err))
+		return do.University{}, err
+	}
+	// 根据 shortName 去更新其余四个字段
+	err = db.Transaction(func(tx *gorm.DB) error {
+		return RefreshUniversityStats(tx, university.ShortName)
+	})
+	if err != nil {
+		zap.L().Error("mysql.RefreshUniversityStats() failed", zap.String("name", name), zap.Error(err))
+		return do.University{}, err
+	}
+	// 拿到更新后的对象
+	if err = db.Table("university").Where("slug = ?", university.Slug).First(&university).Error; err != nil {
+		zap.L().Error("GetUniversityByName() failed", zap.String("name", name), zap.Error(err))
 		return do.University{}, err
 	}
 	zap.L().Info("GetUniversityByName() success", zap.String("name", name))
@@ -264,35 +274,47 @@ func GetUniversityList(req dto.UniversityGetListReq) (universities []do.Universi
 }
 
 // UpdateUniversities 根据传入的 model.Universities 数组，更新 universities 表
-func UpdateUniversities(universities []do.University) error {
-	if len(universities) == 0 {
-		zap.L().Info("UpdateUniversities() no universities")
+func UpdateUniversities(dtoUniversities []dto.UniversityUpdateReq) error {
+	if len(dtoUniversities) == 0 {
+		zap.L().Info("mysql.UpdateUniversities() failed: req has no universities")
 		return nil
 	}
-	return db.Table("university").Transaction(func(tx *gorm.DB) error {
-		for _, v := range universities {
-			// 1. 检查主键是否存在
-			if v.Slug == "" {
+	return db.Transaction(func(tx *gorm.DB) error {
+		for _, u := range dtoUniversities {
+			var doUniversity do.University
+			if u.Slug == "nil" {
+				zap.L().Error("mysql.UpdateUniversities() failed: slug is nil", zap.String("title", doUniversity.Title))
 				return fmt.Errorf("university slug cannot be empty")
 			}
-			// 2. 执行更新
-			// 使用 Select("*") 或将结构体转为 map 可以强制更新零值
-			// 这里指定 Model 为 Universities 结构体对应的表
-			result := tx.Model(&do.University{}).
-				Omit("CreatedTime", "UpdatedTime").
-				Where("slug = ?", v.Slug).
-				Updates(&v) // 如果 v 中是字段是指针，nil 不更新，非 nil 的零值会更新
-			if result.Error != nil {
-				zap.L().Error("UpdateUniversities failed", zap.Error(result.Error), zap.String("slug", v.Slug))
-				return result.Error // 返回错误，事务会自动回滚
+			doUniversity.Slug = u.Slug
+			doUniversity.ShortName = u.ShortName
+			doUniversity.Title = u.Title
+			doUniversity.Vis = u.Vis
+			doUniversity.Website = u.Website
+			doUniversity.FullNameEn = u.FullNameEn
+			doUniversity.Region = u.Region
+			doUniversity.Province = u.Province
+			doUniversity.City = u.City
+			doUniversity.Story = u.Story
+			result := tx.Table("university").
+				Omit("HasVector MainVectorFormat ResourceCount ComputationID CreatedTime UpdatedTime").
+				Where("slug = ?", u.Slug).
+				Updates(&doUniversity)
+			if err := result.Error; err != nil {
+				zap.L().Error("mysql.UpdateUniversities() failed", zap.String("ShortName", doUniversity.ShortName), zap.Error(err))
+				return err
 			}
-			// 如果没有匹配到行，报错
 			if result.RowsAffected == 0 {
 				// 这里仅记录日志，不中断事务。
-				zap.L().Warn("No record found to update", zap.String("slug", v.Slug))
+				zap.L().Warn("No record found to update", zap.String("slug", u.Slug))
+			}
+			// 更新后刷新 HasVector MainVectorFormat ResourceCount ComputationID 四个字段
+			if err := RefreshUniversityStats(tx, doUniversity.ShortName); err != nil {
+				zap.L().Error("mysql.RefreshUniversityStats() failed", zap.String("ShortName", doUniversity.ShortName), zap.Error(err))
+				return err
 			}
 		}
-		zap.L().Info("UpdateUniversities() success", zap.Int("count", len(universities)))
-		return nil // 返回 nil，事务会提交
+		zap.L().Info("mysql.UpdateUniversities() success", zap.Int("count", len(dtoUniversities)))
+		return nil
 	})
 }

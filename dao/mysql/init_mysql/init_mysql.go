@@ -1,5 +1,6 @@
 package main
 
+/*
 import (
 	"database/sql"
 	"encoding/json"
@@ -228,3 +229,4 @@ func main() {
 
 	zap.L().Info("所有数据导入任务已成功完成。")
 }
+*/

@@ -4,7 +4,6 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"fmt"
-	"github.com/spf13/viper"
 	"go.uber.org/zap"
 	xdraw "golang.org/x/image/draw"
 	"image"
@@ -130,7 +129,8 @@ func ParseHexOrWhite(s string) color.RGBA {
 // ConvertSvgToBitmap 使用 rsvg-convert 命令行工具，对临时下载的 svg 文件进行转格式操作
 // 注意：rsvg-convert 只支持 svg 转 png，如果是其他格式的话，需要再调用 ConvertPngToOther
 func ConvertSvgToBitmap(svgPath, bitmapPath, resourceType string, size, width, height int, bgColor string) error {
-	runMode := viper.GetString("RUN_MODE") // 引入 runMode 变量
+	runMode := strings.ToLower(os.Getenv("RUN_MODE")) // 直接从os读
+	bgColor = NormalizeColor(bgColor)
 	// 第一步：先进行 svg 转 png，格式校验放在 ConvertPngToOther 里
 	targetSize := size
 	if targetSize == 0 && width > 0 && height > 0 {
@@ -140,6 +140,10 @@ func ConvertSvgToBitmap(svgPath, bitmapPath, resourceType string, size, width, h
 		zap.L().Error("targetSize is zero")
 		return nil
 	}
+	// 增加默认尺寸保护，防止 rsvg 报错
+	if targetSize <= 0 {
+		targetSize = 512
+	}
 	var cmd *exec.Cmd
 	if runMode == "local" {
 
@@ -147,7 +151,11 @@ func ConvertSvgToBitmap(svgPath, bitmapPath, resourceType string, size, width, h
 		svgPathWsl := windowsPathToWslPath(svgPath)
 		bitmapPathWsl := windowsPathToWslPath(bitmapPath)
 		// 构造参数
-		args := []string{"-f", "png", "-o", bitmapPathWsl, svgPathWsl}
+		args := []string{"-f", "png",
+			"-w", fmt.Sprint(targetSize),
+			"-h", fmt.Sprint(targetSize),
+			"-o", bitmapPathWsl,
+			svgPathWsl}
 		if bgColor != "" {
 			args = append(args, "--background-color="+bgColor)
 		}

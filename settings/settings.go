@@ -5,6 +5,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/viper"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -101,10 +102,10 @@ type UniversityResources struct {
 	ID            int    `gorm:"primaryKey;column:id" json:"id"`
 	Title         string `gorm:"column:title" json:"title" binding:"required"`
 	ShortName     string `gorm:"column:short_name" json:"short_name" binding:"required"`
-	ResourceName  string `gorm:"column:resource_name" json:"resource_name" binding:"required"`
-	ResourceType  string `gorm:"column:resource_type" json:"resource_type" binding:"required"`
-	ResourceMd5   string `gorm:"column:resource_md5" json:"resource_md5"`
-	ResourceSizeB int    `gorm:"column:resource_size_b" json:"resource_size_b"`
+	ResourceName  string `gorm:"column:name" json:"name" binding:"required"`
+	ResourceType  string `gorm:"column:type" json:"type" binding:"required"`
+	ResourceMd5   string `gorm:"column:md5" json:"md5"`
+	ResourceSizeB int    `gorm:"column:size" json:"size"`
 
 	// LastUpdateTime 对应数据库的 TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 	// 使用 *time.Time 避免零值覆盖，GORM 会忽略 nil 指针
@@ -112,17 +113,22 @@ type UniversityResources struct {
 
 	IsVector         int    `gorm:"column:is_vector" json:"is_vector"`
 	IsBitmap         int    `gorm:"column:is_bitmap" json:"is_bitmap"`
-	ResolutionWidth  int    `gorm:"column:resolution_width" json:"resolution_width"`
-	ResolutionHeight int    `gorm:"column:resolution_height" json:"resolution_height"`
+	ResolutionWidth  int    `gorm:"column:width" json:"width"`
+	ResolutionHeight int    `gorm:"column:height" json:"height"`
 	UsedForEdge      int    `gorm:"column:used_for_edge" json:"used_for_edge"`
 	IsDeleted        int    `gorm:"column:is_deleted" json:"is_deleted"`
 	BackgroundColor  string `gorm:"column:background_color" json:"background_color"`
 }
 
-func Init() (err error) {
-	// 初始化 viper 实例
-	viper.Reset()
+var isInitialized bool
 
+func Init() (err error) {
+	fmt.Printf("[DEBUG] Init called from: %s\n", debug.Stack()) // 需要引入 "runtime/debug"
+
+	if isInitialized {
+		fmt.Println("[DEBUG] settings.Init() already called, skipping...")
+		return nil
+	}
 	// 1. 直接用标准库 os 获取模式，避免 Viper 还没初始化导致的逻辑错误
 	runMode := strings.ToLower(os.Getenv("RUN_MODE"))
 	fmt.Printf("[DEBUG] Detected RUN_MODE: '%s'\n", runMode)
@@ -173,6 +179,7 @@ func Init() (err error) {
 	// 打印当前生效的文件名，方便排错
 	fmt.Printf("[DEBUG] Using config file: %s\n", viper.ConfigFileUsed())
 
+	isInitialized = true // 标记为已初始化
 	return nil
 }
 

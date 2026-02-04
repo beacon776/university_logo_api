@@ -23,3 +23,17 @@ type UniversityGetListReq struct {
 	SortBy    string `json:"sortBy" binding:"omitempty,oneof=slug title createTime updateTime"`
 	SortOrder string `json:"sortOrder" binding:"omitempty,oneof=asc desc"`
 }
+
+type UniversityUpdateReq struct {
+	Slug      string `json:"slug" binding:"required"`
+	ShortName string `json:"shortName" binding:"required"`
+	Title     string `json:"title" binding:"required"`
+	// 使用 *string 处理 NULL 字段
+	Vis        *string `json:"vis" binding:"omitempty"`
+	Website    string  `json:"website" binding:"required"`
+	FullNameEn string  `json:"fullNameEn" binding:"required"`
+	Region     string  `json:"region" binding:"required"`
+	Province   string  `json:"province" binding:"required"`
+	City       string  `json:"city" binding:"required"`
+	Story      *string `json:"story" binding:"omitempty"`
+}

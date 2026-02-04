@@ -1,25 +1,32 @@
 package service
 
 import (
+	"errors"
 	"go.uber.org/zap"
+	"gorm.io/gorm"
 	"logo_api/dao/mysql"
 	"logo_api/model/university/do"
 	"logo_api/model/university/dto"
+	"logo_api/model/university/vo"
 	"logo_api/settings"
 )
 
 // GetUniversityFromName 根据单个 name 获取单个 university 对象
-func GetUniversityFromName(name string) (do.University, error) {
+func GetUniversityFromName(name string) (vo.UniversityResp, error) {
 	var (
 		daoUniversity  do.University
-		respUniversity do.University
+		respUniversity vo.UniversityResp
 		err            error
 	)
 	if daoUniversity, err = mysql.GetUniversityByName(name); err != nil {
-		zap.L().Error("mysql.GetUniversityByName() failed", zap.Error(err))
-		return do.University{}, err
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			zap.L().Error("GetUniversityFromName() failed because university could not found", zap.String("name", name), zap.Error(err))
+			return vo.UniversityResp{}, errors.New("university not found")
+		}
+		zap.L().Error("mysql.GetUniversityByName() failed", zap.String("name", name), zap.Error(err))
+		return vo.UniversityResp{}, err
 	}
-	respUniversity = do.University{
+	respUniversity = vo.UniversityResp{
 		Slug:             daoUniversity.Slug,
 		ShortName:        daoUniversity.ShortName,
 		Title:            daoUniversity.Title,
@@ -47,6 +54,7 @@ func InsertUniversity(reqUniversities []dto.UniversityInsertReq) error {
 	daoUniversities := make([]settings.Universities, 0, len(reqUniversities))
 	// 检查输入是否为空
 	if len(reqUniversities) == 0 {
+		zap.L().Warn("this req is empty", zap.Any("reqUniversities", reqUniversities))
 		return nil
 	}
 	for _, reqU := range reqUniversities {
@@ -81,11 +89,11 @@ func InsertUniversity(reqUniversities []dto.UniversityInsertReq) error {
 	return nil
 }
 
-func UpdateUniversities(universities []do.University) error {
-	if err := mysql.UpdateUniversities(universities); err != nil {
+func UpdateUniversities(reqs []dto.UniversityUpdateReq) error {
+	if err := mysql.UpdateUniversities(reqs); err != nil {
 		zap.L().Error("mysql.UpdateUniversities() failed", zap.Error(err))
 		return err
 	}
-	zap.L().Info("UpdateUniversities success", zap.Int("count", len(universities)))
+	zap.L().Info("service.UpdateUniversities() success", zap.Int("count", len(reqs)))
 	return nil
 }

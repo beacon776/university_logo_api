@@ -91,7 +91,7 @@ func RegisterFunc() gin.HandlerFunc {
 		}
 
 		// 6. 插入新用户 (存储哈希后的密码)
-		newUser := dto.UserInsertReq{
+		newUser := dto.UserInsertDTO{
 			Status:   model.StatusActive, // 1 启用 0 禁用
 			Username: username,
 			Password: string(hashedPassword), // 存储哈希值

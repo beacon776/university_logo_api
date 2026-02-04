@@ -6,7 +6,6 @@ import (
 	"go.uber.org/zap"
 	"logo_api/dao/mysql"
 	"logo_api/model"
-	"logo_api/model/university/do"
 	"logo_api/model/university/dto"
 	"logo_api/model/university/vo"
 	"logo_api/service"
@@ -128,19 +127,18 @@ func GetUniversityList() gin.HandlerFunc {
 
 func UpdateUniversities() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var universities []do.University
-		if err := c.ShouldBindJSON(&universities); err != nil {
-			zap.L().Error("c.ShouldBindJSON(&universities) failed", zap.Error(err))
+		var reqs []dto.UniversityUpdateReq
+		if err := c.ShouldBindJSON(&reqs); err != nil {
+			zap.L().Error("handler.UpdateUniversities() bind error", zap.Error(err))
 			model.Error(c, model.CodeInvalidParam)
 			return
 		}
-		if err := service.UpdateUniversities(universities); err != nil {
-			zap.L().Error("svc.UpdateUniversities() failed", zap.Error(err))
+		if err := service.UpdateUniversities(reqs); err != nil {
+			zap.L().Error("service.UpdateUniversities() update universities error", zap.Error(err))
 			model.Error(c, model.CodeServerErr)
 			return
 		}
-		// 成功
-		zap.L().Info("Success update universities", zap.Int("count", len(universities)))
-		model.Success(c, universities)
+		zap.L().Info("handler.UpdateUniversities() Success", zap.Int("success count", len(reqs)))
+		model.Success(c, "Successfully update "+strconv.Itoa(len(reqs))+" universities.")
 	}
 }

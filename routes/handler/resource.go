@@ -26,7 +26,7 @@ func GetResources() gin.HandlerFunc {
 		for _, name := range req {
 			names = append(names, name.Name)
 		}
-		resource, err := service.GetResources(names)
+		voResource, err := service.GetResources(names)
 		if err != nil {
 			zap.L().Error("GetResourceByName() failed", zap.Error(err))
 			// 资源未找到
@@ -34,7 +34,7 @@ func GetResources() gin.HandlerFunc {
 			return
 		}
 		// 3. 成功响应
-		model.Success(c, resource)
+		model.Success(c, voResource)
 	}
 }
 
@@ -49,7 +49,7 @@ func GetResourceList() gin.HandlerFunc {
 		}
 		zap.L().Info("success get req param", zap.Any("req", req))
 		var (
-			resourceList []vo.ResourceResp
+			resourceList vo.ResourceResp
 			err          error
 		)
 		if resourceList, err = service.GetResourceList(req); err != nil {
@@ -57,7 +57,7 @@ func GetResourceList() gin.HandlerFunc {
 			model.Error(c, http.StatusInternalServerError)
 			return
 		}
-		zap.L().Info("GetResourceList() success", zap.Int("success count", len(resourceList)))
+		zap.L().Info("GetResourceList() success", zap.Int("success count", resourceList.TotalCount))
 		model.Success(c, resourceList)
 	}
 }

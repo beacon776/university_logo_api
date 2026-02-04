@@ -37,7 +37,7 @@ func GetUserFromName(username string) (do.UserDO, error) {
 }
 
 // InsertUser 使用 GORM 插入用户
-func InsertUser(req dto.UserInsertReq) (insertId int, err error) {
+func InsertUser(req dto.UserInsertDTO) (insertId int, err error) {
 	// 使用 db.Create() 插入数据。GORM 会自动使用结构体的字段名和值来构建 INSERT 语句。
 	var doUser do.UserDO
 	doUser.Username = req.Username

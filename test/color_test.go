@@ -1,12 +1,16 @@
 package test
 
-import "testing"
+import (
+	"logo_api/util"
+	"testing"
+)
 
 func TestNormalizeColor(t *testing.T) {
 	tests := []struct {
 		input    string
 		expected string
 	}{
+		{"", ""},
 		{"red", "#FF0000"},
 		{"  blue  ", "#0000FF"},
 		{"#f00", "#FF0000"},
@@ -19,7 +23,7 @@ func TestNormalizeColor(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		result := NormalizeColor(tt.input)
+		result := util.NormalizeColor(tt.input)
 		if result != tt.expected {
 			t.Errorf("input: %s, expected: %s, got: %s", tt.input, tt.expected, result)
 		}

@@ -21,8 +21,8 @@ type UserGetListReq struct {
 	SortOrder string `json:"sortOrder" form:"sortOrder" binding:"omitempty,oneof=asc desc"`
 }
 
-// UserInsertReq 插入 user 表所需字段，不包括 id，id 是数据库自增字段。
-type UserInsertReq struct {
+// UserInsertDTO 插入 user 表所需字段，不包括 id，id 是数据库自增字段。
+type UserInsertDTO struct {
 	Username string `gorm:"column:username" json:"username"`
 	// json:"-" 忽略 json 映射
 	Password string `gorm:"column:password" json:"-"`

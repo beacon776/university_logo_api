@@ -39,12 +39,12 @@ func Setup(svc *service.ResourceService) *gin.Engine {
 		// 后台管理路由：增、删、改、查、登录
 		university.GET("/:name", handler.GetUniversityFromName())
 		university.POST("/insert", handler.InsertUniversity())
-		university.POST("/update/:name", handler.UpdateUniversities())
+		university.POST("/update", handler.UpdateUniversities())
 	}
 	resource := router.Group("/resource")
 	resource.Use(auth.AuthRequired(svc))
 	{
-		resource.GET("/getLogo/:fullName", handler.GetLogoFromNameHandler(svc))
+		resource.GET("/getLogo", handler.GetLogoFromNameHandler(svc))
 		resource.POST("/get", handler.GetResources())
 		resource.POST("/list", handler.GetResourceList())
 		resource.POST("/insert", handler.InsertResource())
