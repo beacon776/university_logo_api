@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strings"
 )
 
 type CosClient struct {
@@ -220,5 +221,66 @@ func (c *CosClient) DeleteObject(ctx context.Context, cosPath string) error {
 		return err
 	}
 	zap.L().Info("DeleteObject() success", zap.String("cosPath", cosPath))
+	return nil
+}
+
+func (c *CosClient) RenameFolder(ctx context.Context, oldShortName, newShortName string) error {
+	// 假设 oldShortName="beacon", newShortName="beacon7"
+	oldPrefix := fmt.Sprintf("beacon/downloads/%s/", oldShortName)
+	newPrefix := fmt.Sprintf("beacon/downloads/%s/", newShortName)
+
+	// 分页处理标识
+	isTruncated := true
+	marker := ""
+
+	for isTruncated {
+		opt := &cos.BucketGetOptions{
+			Prefix: oldPrefix,
+			Marker: marker, // 用于获取下一页
+		}
+
+		// 采用分页，因为 c.Client.Bucket.Get 只能获取前 1000 份数据
+		result, _, err := c.Client.Bucket.Get(ctx, opt)
+		if err != nil {
+			zap.L().Error("c.Client.Bucket.Get() err:", zap.Error(err))
+			return err
+		}
+		// 如果第一页就没有内容，说明文件夹根本不存在, 直接退出循环
+		if len(result.Contents) == 0 && marker == "" {
+			zap.L().Warn("RenameFolder failed: old folder not found", zap.String("prefix", oldPrefix))
+			return fmt.Errorf("old folder %s does not exist", oldShortName)
+		}
+
+		for _, obj := range result.Contents {
+			oldKey := obj.Key
+			// 路径替换：将 beacon/downloads/old/... 替换为 beacon/downloads/new/...
+			newKey := strings.Replace(oldKey, oldPrefix, newPrefix, 1)
+
+			// 1. 复制：创建源路径和目标路径的映射
+			// COS Copy API 需要 source 格式: bucketname-appid.cos.region.myqcloud.com/key
+			source := fmt.Sprintf("%s/%s", c.Client.BaseURL.BucketURL.Host, oldKey)
+			_, _, err := c.Client.Object.Copy(ctx, newKey, source, nil)
+			if err != nil {
+				zap.L().Error("Copy object failed", zap.String("oldKey", oldKey), zap.Error(err))
+				return err
+			}
+
+			// 2. 删除：删除原路径文件
+			err = c.DeleteObject(ctx, oldKey)
+			if err != nil {
+				zap.L().Error("Delete old object failed", zap.String("oldKey", oldKey), zap.Error(err))
+				return err
+			}
+		}
+
+		// 更新分页状态
+		isTruncated = result.IsTruncated
+		marker = result.NextMarker
+	}
+
+	zap.L().Info("Rename folder success",
+		zap.String("from", oldPrefix),
+		zap.String("to", newPrefix))
+
 	return nil
 }
