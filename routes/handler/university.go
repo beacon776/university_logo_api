@@ -41,14 +41,17 @@ func InsertUniversity() gin.HandlerFunc {
 			model.Error(c, model.CodeServerErr)
 			return
 		}
+		var reUnis []string
 		for _, reqUni := range req {
 			if _, err := service.GetUniversityFromName(reqUni.Title); err == nil { // err == nil 说明找到了该高校，目前已经重复了
-				zap.L().Error("This University Is Exist", zap.String("title", reqUni.Title), zap.Error(err))
-				model.Error(c, model.CodeUniversityExist, "This University Is Exist:"+reqUni.Title)
-				return
+				reUnis = append(reUnis, reqUni.Title) // 后续进行处理
 			}
 		}
-
+		if len(reUnis) != 0 { // 出现已存在高校的情况
+			zap.L().Error("These Universities is already Exist", zap.Strings("title", reUnis))
+			model.Error(c, model.CodeUniversityExist, "These Universities is already Exist, titles: "+strings.Join(reUnis, ","))
+			return
+		}
 		if err := service.InsertUniversity(req); err != nil {
 			zap.L().Error("InsertUniversity() insert error", zap.Error(err))
 			model.Error(c, model.CodeServerErr)

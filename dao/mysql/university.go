@@ -1,12 +1,15 @@
 package mysql
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"go.uber.org/zap"
 	do "logo_api/model/university/do"
 	dto "logo_api/model/university/dto"
 	"logo_api/settings"
+	"logo_api/util"
+
 	// 确保导入 GORM
 	"gorm.io/gorm"
 )
@@ -279,29 +282,52 @@ func UpdateUniversities(dtoUniversities []dto.UniversityUpdateReq) error {
 		zap.L().Info("mysql.UpdateUniversities() failed: req has no universities")
 		return nil
 	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		for _, u := range dtoUniversities {
-			var doUniversity do.University
+
+	// start
+	for _, u := range dtoUniversities { // 现信息
+		// 1. 先查出数据库中的旧数据，确保拿到准确的旧 short_name
+		var oldUniversity do.University // 原信息
+		if err := db.Table("university").Where("slug = ?", u.Slug).First(&oldUniversity).Error; err != nil {
+			zap.L().Error("mysql.UpdateUniversities() failed to find university", zap.String("slug", u.Slug))
+			return err // 或者 return err
+		}
+		// 2. 预判逻辑：如果 short_name 变了，检查新 short_name 是否已被占用
+		if oldUniversity.ShortName != u.ShortName {
+			var count int64
+			// 查询是否有除了当前大学之外的记录使用了该 short_name
+			db.Table("university").Where("short_name = ? AND slug != ?", u.ShortName, u.Slug).Count(&count)
+			if count > 0 {
+				zap.L().Error("mysql.UpdateUniversities() failed: short_name already exists",
+					zap.String("new_short_name", u.ShortName))
+				// TODO: 应该返回 model/enum.go 里的枚举Error类，方便接口返回信息。
+				return fmt.Errorf("short_name '%s' has been taken by another university", u.ShortName)
+			}
+		}
+
+		oldShortName := oldUniversity.ShortName
+		// 3. 在事务中更新数据库
+		err := db.Transaction(func(tx *gorm.DB) error {
 			if u.Slug == "nil" {
-				zap.L().Error("mysql.UpdateUniversities() failed: slug is nil", zap.String("title", doUniversity.Title))
+				zap.L().Error("mysql.UpdateUniversities() failed: slug is nil", zap.String("title", oldUniversity.Title))
+				// TODO: 应该返回 model/enum.go 里的枚举Error类，方便接口返回信息。
 				return fmt.Errorf("university slug cannot be empty")
 			}
-			doUniversity.Slug = u.Slug
-			doUniversity.ShortName = u.ShortName
-			doUniversity.Title = u.Title
-			doUniversity.Vis = u.Vis
-			doUniversity.Website = u.Website
-			doUniversity.FullNameEn = u.FullNameEn
-			doUniversity.Region = u.Region
-			doUniversity.Province = u.Province
-			doUniversity.City = u.City
-			doUniversity.Story = u.Story
+
+			oldUniversity.ShortName = u.ShortName
+			oldUniversity.Title = u.Title
+			oldUniversity.Vis = u.Vis
+			oldUniversity.Website = u.Website
+			oldUniversity.FullNameEn = u.FullNameEn
+			oldUniversity.Region = u.Region
+			oldUniversity.Province = u.Province
+			oldUniversity.City = u.City
+			oldUniversity.Story = u.Story
 			result := tx.Table("university").
 				Omit("HasVector MainVectorFormat ResourceCount ComputationID CreatedTime UpdatedTime").
 				Where("slug = ?", u.Slug).
-				Updates(&doUniversity)
+				Updates(&oldUniversity)
 			if err := result.Error; err != nil {
-				zap.L().Error("mysql.UpdateUniversities() failed", zap.String("ShortName", doUniversity.ShortName), zap.Error(err))
+				zap.L().Error("mysql.UpdateUniversities() failed", zap.String("ShortName", oldUniversity.ShortName), zap.Error(err))
 				return err
 			}
 			if result.RowsAffected == 0 {
@@ -309,12 +335,33 @@ func UpdateUniversities(dtoUniversities []dto.UniversityUpdateReq) error {
 				zap.L().Warn("No record found to update", zap.String("slug", u.Slug))
 			}
 			// 更新后刷新 HasVector MainVectorFormat ResourceCount ComputationID 四个字段
-			if err := RefreshUniversityStats(tx, doUniversity.ShortName); err != nil {
-				zap.L().Error("mysql.RefreshUniversityStats() failed", zap.String("ShortName", doUniversity.ShortName), zap.Error(err))
+			if err := RefreshUniversityStats(tx, oldUniversity.ShortName); err != nil {
+				zap.L().Error("mysql.RefreshUniversityStats() failed", zap.String("ShortName", oldUniversity.ShortName), zap.Error(err))
+				return err
+			}
+			// 注意：开启了 ON UPDATE CASCADE，tx 更新 short_name 后，resource 表会自动同步
+			return nil
+		})
+
+		if err != nil {
+			zap.L().Error("mysql.UpdateUniversities() Error", zap.String("Title", oldUniversity.Title), zap.Error(err))
+			return err
+		}
+
+		// 4. 如果涉及 shortName 字段的修改，在事务成功提交后，同步修改腾讯云COS文件夹名称
+		if oldShortName != u.ShortName {
+			client, err := util.NewClient(settings.Config.CosConfig)
+			if err != nil {
+				zap.L().Error("Failed to init COS client", zap.Error(err))
+				return err // 此时数据已更新但文件没改，需要做补偿逻辑或补偿日志
+			}
+			// 调用重命名文件夹逻辑
+			if err = client.RenameFolder(context.Background(), oldShortName, u.ShortName); err != nil {
+				zap.L().Error("COS Rename failed! Manual intervention required",
+					zap.String("from", oldShortName), zap.String("to", u.ShortName))
 				return err
 			}
 		}
-		zap.L().Info("mysql.UpdateUniversities() success", zap.Int("count", len(dtoUniversities)))
-		return nil
-	})
+	}
+	return nil
 }
